@@ -1,7 +1,7 @@
 Source: dwarves
 Priority: extra
 Maintainer: Domenico Andreoli <cavok@debian.org>
-Build-Depends: debhelper (>= 5), libelf-dev, libdw-dev, cmake
+Build-Depends: debhelper (>= 5), libelf-dev, libebl-dev, libdw-dev, cmake
 Standards-Version: 3.7.2
 Section: libs
 
