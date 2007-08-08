@@ -23,7 +23,7 @@ configure: configure-stamp
 configure-stamp:
 	dh_testdir
 	mkdir debian/build
-	cd debian/build && cmake -D__LIB=lib ../..
+	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="MinSizeRel" ../..
 	touch configure-stamp
 
 build: build-stamp
@@ -46,7 +46,7 @@ install: build
 	dh_clean -k
 	dh_installdirs
 
-	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/tmp
+	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/dwarves
 
 # Build architecture-independent files here.
 binary-indep: build install
@@ -59,7 +59,7 @@ binary-arch: build install
 	dh_installchangelogs
 	dh_installdocs
 	dh_installexamples
-	dh_install --source=debian/tmp
+	dh_install --source=debian/dwarves
 	dh_installman
 	dh_link
 	dh_strip
