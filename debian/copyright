@@ -1,0 +1,20 @@
+This package was debianized by Domenico Andreoli <cavok@debian.org> on
+Wed, 08 Aug 2007 04:02:11 +0200.
+
+It was downloaded from http://userweb.kernel.org/~acme
+
+Upstream Author: 
+
+    Arnaldo Carvalho de Melo <acme@redhat.com>
+
+Copyright: 
+
+    Copyright (C) 2006-2007 Arnaldo Carvalho de Melo
+
+License:
+
+    GNU General Public License, version 2, found in
+    /usr/share/common-licenses/GPL on Debian systems.
+
+The Debian packaging is (C) 2007, Domenico Andreoli <cavok@debian.org> and
+is licensed under the GPL, see `/usr/share/common-licenses/GPL'.
