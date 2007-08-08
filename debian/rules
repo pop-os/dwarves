@@ -46,7 +46,7 @@ install: build
 	dh_clean -k
 	dh_installdirs
 
-	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/dwarves
+	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/tmp
 
 # Build architecture-independent files here.
 binary-indep: build install
@@ -59,7 +59,7 @@ binary-arch: build install
 	dh_installchangelogs
 	dh_installdocs
 	dh_installexamples
-	dh_install --source=debian/dwarves
+	dh_install --source=debian/tmp
 	dh_installman
 	dh_link
 	dh_strip
