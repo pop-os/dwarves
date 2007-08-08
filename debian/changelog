@@ -1,5 +1,5 @@
 dwarves (1.0-1) unstable; urgency=low
 
-  * Initial release.
+  * Initial release (closes: #436522).
 
  -- Domenico Andreoli <cavok@debian.org>  Wed, 08 Aug 2007 04:02:11 +0200
