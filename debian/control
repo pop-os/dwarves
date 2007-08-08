@@ -1,0 +1,39 @@
+Source: dwarves
+Priority: extra
+Maintainer: Domenico Andreoli <cavok@debian.org>
+Build-Depends: debhelper (>= 5), libdw-dev, cmake
+Standards-Version: 3.7.2
+Section: libs
+
+Package: libdwarves-dev
+Section: libdevel
+Architecture: any
+Depends: libdwarves1 (= ${Source-Version})
+Description: development files for dwarves library
+ <insert long description, indented with spaces>
+
+Package: libdwarves1
+Section: libs
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: shared library for dwarves tools
+ <insert long description, indented with spaces>
+
+Package: dwarves
+Section: utils
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Advanced DWARF utilities
+ Tools that use the DWARF debugging information inserted in ELF binaries
+ by compilers such as GCC, used by well known debuggers such as GDB,
+ and more recent ones such as systemtap.
+ .
+ Utilities in the dwarves suite include:
+ .
+  - pahole: finds alignment holes in structs and classes in languages
+    such as C/C++, CPU cacheline alignment. Helps repack those structures
+    to achieve more cache hits.
+  - codiff: a diff like tool to compare the effects changes in source
+    code generate on the resulting binaries
+  - pfunct: that can be used to find all sorts of information about
+    functions, inlines, etc.
