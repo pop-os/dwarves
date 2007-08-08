@@ -7,3 +7,4 @@ usr/bin/pdwtags
 usr/bin/pfunct
 usr/bin/pglobal
 usr/bin/prefcnt
+usr/share/dwarves/runtime/python/ostra.py usr/share/python-support/dwarves

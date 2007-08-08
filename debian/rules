@@ -65,7 +65,7 @@ binary-arch: build install
 	dh_strip
 	dh_compress
 	dh_fixperms
-#	dh_python
+	dh_pysupport
 	dh_makeshlibs -V "libdwarves1"
 	dh_installdeb
 	dh_shlibdeps

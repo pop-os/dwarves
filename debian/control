@@ -15,14 +15,14 @@ Description: development files for dwarves library
 Package: libdwarves1
 Section: libs
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}
 Description: shared library for dwarves tools
  <insert long description, indented with spaces>
 
 Package: dwarves
 Section: utils
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${python:Depends}
 Description: Advanced DWARF utilities
  Tools that use the DWARF debugging information inserted in ELF binaries
  by compilers such as GCC, used by well known debuggers such as GDB,
