@@ -1,7 +1,7 @@
 This package was debianized by Domenico Andreoli <cavok@debian.org> on
 Wed, 08 Aug 2007 04:02:11 +0200.
 
-It was downloaded from http://userweb.kernel.org/~acme
+It was downloaded from http://userweb.kernel.org/~acme/dwarves
 
 Upstream Author: 
 
@@ -14,7 +14,7 @@ Copyright:
 License:
 
     GNU General Public License, version 2, found in
-    /usr/share/common-licenses/GPL on Debian systems.
+    /usr/share/common-licenses/GPL-2 on Debian systems.
 
 The Debian packaging is (C) 2007, Domenico Andreoli <cavok@debian.org> and
 is licensed under the GPL, see `/usr/share/common-licenses/GPL'.
