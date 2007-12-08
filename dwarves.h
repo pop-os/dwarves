@@ -45,6 +45,8 @@ struct cu {
 	size_t		 max_len_changed_item;
 	size_t		 function_bytes_added;
 	size_t		 function_bytes_removed;
+	int		 build_id_len;
+	unsigned char	 build_id[0];
 };
 
 struct tag {
@@ -54,20 +56,136 @@ struct tag {
 	const char	 *decl_file;
 	uint16_t	 decl_line;
 	uint16_t	 tag;
-	uint32_t	 refcnt;
+	uint16_t	 refcnt;
+	uint16_t	 recursivity_level;
 };
 
-struct type {
+static inline int tag__is_enumeration(const struct tag *self)
+{
+	return self->tag == DW_TAG_enumeration_type;
+}
+
+static inline int tag__is_namespace(const struct tag *self)
+{
+	return self->tag == DW_TAG_namespace;
+}
+
+static inline int tag__is_struct(const struct tag *self)
+{
+	return self->tag == DW_TAG_structure_type;
+}
+
+static inline int tag__is_union(const struct tag *self)
+{
+	return self->tag == DW_TAG_union_type;
+}
+ 
+struct namespace {
 	struct tag	 tag;
-	struct list_head node;
 	const char	 *name;
+	struct list_head tags;
+	uint16_t	 nr_tags;
+};
+
+static inline struct namespace *tag__namespace(const struct tag *self)
+{
+	return (struct namespace *)self;
+}
+
+/** 
+ * namespace__for_each_tag - iterate thru all the tags
+ * @self: struct namespace instance to iterate
+ * @pos: struct tag iterator
+ */
+#define namespace__for_each_tag(self, pos) \
+	list_for_each_entry(pos, &(self)->tags, node)
+
+/**
+ * struct type - base type for enumerations, structs and unions
+ *
+ * @nr_members: number of DW_TAG_member entries
+ * @nr_tags: number of tags
+ */
+struct type {
+	struct namespace namespace;
+	struct list_head node;
+	Dwarf_Off	 specification;
 	size_t		 size;
-	struct list_head members;
 	uint16_t	 nr_members;
 	uint8_t		 declaration; /* only one bit used */
 	uint8_t		 definition_emitted:1;
 	uint8_t		 fwd_decl_emitted:1;
 };
+
+static inline struct class *type__class(const struct type *self)
+{
+	return (struct class *)self;
+}
+
+/** 
+ * type__for_each_tag - iterate thru all the tags
+ * @self: struct type instance to iterate
+ * @pos: struct tag iterator
+ */
+#define type__for_each_tag(self, pos) \
+	list_for_each_entry(pos, &(self)->namespace.tags, node)
+
+/** 
+ * type__for_each_enumerator - iterate thru the enumerator entries
+ * @self: struct type instance to iterate
+ * @pos: struct enumerator iterator
+ */
+#define type__for_each_enumerator(self, pos) \
+	list_for_each_entry(pos, &(self)->namespace.tags, tag.node)
+
+/** 
+ * type__for_each_member - iterate thru the entries that use space
+ *                         (data members and inheritance entries)
+ * @self: struct type instance to iterate
+ * @pos: struct class_member iterator
+ */
+#define type__for_each_member(self, pos) \
+	list_for_each_entry(pos, &(self)->namespace.tags, tag.node) \
+		if (!(pos->tag.tag == DW_TAG_member || \
+		      pos->tag.tag == DW_TAG_inheritance)) \
+			continue; \
+		else
+
+/** 
+ * type__for_each_data_member - iterate thru the data member entries
+ * @self: struct type instance to iterate
+ * @pos: struct class_member iterator
+ */
+#define type__for_each_data_member(self, pos) \
+	list_for_each_entry(pos, &(self)->namespace.tags, tag.node) \
+		if (pos->tag.tag != DW_TAG_member) \
+			continue; \
+		else
+
+/** 
+ * type__for_each_member_safe - safely iterate thru the entries that use space
+ *                              (data members and inheritance entries)
+ * @self: struct type instance to iterate
+ * @pos: struct class_member iterator
+ * @n: struct class_member temp iterator
+ */
+#define type__for_each_member_safe(self, pos, n) \
+	list_for_each_entry_safe(pos, n, &(self)->namespace.tags, tag.node) \
+		if (pos->tag.tag != DW_TAG_member) \
+			continue; \
+		else
+
+/** 
+ * type__for_each_data_member_safe - safely iterate thru the data member entries
+ * @self: struct type instance to iterate
+ * @pos: struct class_member iterator
+ * @n: struct class_member temp iterator
+ */
+#define type__for_each_data_member_safe(self, pos, n) \
+	list_for_each_entry_safe(pos, n, &(self)->namespace.tags, tag.node) \
+		if (pos->tag.tag != DW_TAG_member) \
+			continue; \
+		else
 
 static inline struct type *tag__type(const struct tag *self)
 {
@@ -76,6 +194,8 @@ static inline struct type *tag__type(const struct tag *self)
 
 struct class {
 	struct type	 type;
+	struct list_head vtable;
+	uint16_t	 nr_vtable_entries;
 	uint8_t		 nr_holes;
 	uint8_t		 nr_bit_holes;
 	uint16_t	 padding;
@@ -97,14 +217,22 @@ extern struct class *class__clone(const struct class *from,
 				  const char *new_class_name);
 extern void class__delete(struct class *self);
 
-static inline const char *class__name(const struct class *self)
+static inline struct list_head *class__tags(struct class *self)
 {
-	return self->type.name;
+	return &self->type.namespace.tags;
 }
 
-static inline uint16_t class__tag_type(const struct class *self)
+extern const char *type__name(struct type *self, const struct cu *cu);
+
+static inline const char *class__name(struct class *self,
+				      const struct cu *cu)
 {
-	return self->type.tag.tag;
+	return type__name(&self->type, cu);
+}
+
+static inline int class__is_struct(const struct class *self)
+{
+	return tag__is_struct(&self->type.namespace.tag);
 }
 
 struct base_type {
@@ -137,10 +265,18 @@ struct class_member {
 	uint8_t		 bit_size;
 	uint8_t		 bit_hole;	/* If there is a bit hole before the next
 					   one (or the end of the struct) */
+	uint8_t		 bitfield_end:1; /* Is this the last entry in a bitfield? */
 	uint8_t		 visited:1;
+	uint8_t		 accessibility:2; /* DW_ACCESS_{public,protected,private} */
+	uint8_t		 virtuality:2; /* DW_VIRTUALITY_{none,virtual,pure_virtual} */
 	uint16_t	 hole;		/* If there is a hole before the next
 					   one (or the end of the struct) */
 };
+
+static inline struct class_member *tag__class_member(const struct tag *self)
+{
+	return (struct class_member *)self;
+}
 
 extern size_t class_member__size(const struct class_member *self,
 				 const struct cu *cu);
@@ -178,16 +314,29 @@ static inline struct ftype *tag__ftype(const struct tag *self)
 	return (struct ftype *)self;
 }
 
+/** 
+ * ftype__for_each_parameter - iterate thru all the parameters
+ * @self: struct ftype instance to iterate
+ * @pos: struct parameter iterator
+ */
+#define ftype__for_each_parameter(self, pos) \
+	list_for_each_entry(pos, &(self)->parms, tag.node)
+
 struct function {
 	struct ftype	 proto;
 	struct lexblock	 lexblock;
 	const char	 *name;
+	char		 *linkage_name;
 	Dwarf_Off	 abstract_origin;
 	Dwarf_Off	 specification;
 	size_t		 cu_total_size_inline_expansions;
 	uint16_t	 cu_total_nr_inline_expansions;
-	uint8_t		 inlined;	/* two bits used */
-	uint8_t		 external;	/* one bit used */
+	uint8_t		 inlined:2;
+	uint8_t		 external:1;
+	uint8_t		 accessibility:2; /* DW_ACCESS_{public,protected,private} */
+	uint8_t		 virtuality:2; /* DW_VIRTUALITY_{none,virtual,pure_virtual} */
+	int16_t		 vtable_entry;
+	struct list_head vtable_node;
 	/* fields used by tools */
 	struct list_head tool_node;
 	void		 *priv;
@@ -197,6 +346,14 @@ static inline struct function *tag__function(const struct tag *self)
 {
 	return (struct function *)self;
 }
+
+/** 
+ * function__for_each_parameter - iterate thru all the parameters
+ * @self: struct function instance to iterate
+ * @pos: struct parameter iterator
+ */
+#define function__for_each_parameter(self, pos) \
+	ftype__for_each_parameter(&self->proto, pos)
 
 struct parameter {
 	struct tag	 tag;
@@ -210,6 +367,7 @@ static inline struct parameter *tag__parameter(const struct tag *self)
 }
 
 extern Dwarf_Off parameter__type(struct parameter *self, const struct cu *cu);
+extern const char *parameter__name(struct parameter *self, const struct cu *cu);
 
 enum vlocation {
 	LOCATION_UNKNOWN,
@@ -261,35 +419,43 @@ struct enumerator {
 struct conf_fprintf {
 	const char *prefix;
 	const char *suffix;
-	uint32_t   base_offset;
-	uint8_t	   expand_types;
-	uint8_t    rel_offset;
-	uint8_t	   emit_stats;
-	uint8_t	   indent;
 	int32_t	   type_spacing;
 	int32_t	   name_spacing;
+	uint32_t   base_offset;
+	uint8_t	   indent;
+	uint8_t	   expand_types:1;
+	uint8_t	   expand_pointers:1;
+	uint8_t    rel_offset:1;
+	uint8_t	   emit_stats:1;
+	uint8_t	   suppress_comments:1;
+	uint8_t	   suppress_offset_comment:1;
+	uint8_t	   show_decl_info:1;
+	uint8_t	   show_only_data_members:1;
+	uint8_t	   no_semicolon:1;
 };
 
 extern void dwarves__init(size_t user_cacheline_size);
 
 extern void class__find_holes(struct class *self, const struct cu *cu);
 extern int class__has_hole_ge(const struct class *self, const uint16_t size);
-extern size_t class__fprintf(const struct class *self, const struct cu *cu,
+extern size_t class__fprintf(struct class *self, const struct cu *cu,
 			     const struct conf_fprintf *conf, FILE *fp);
 extern size_t enumeration__fprintf(const struct tag *tag_self,
+				   const struct cu *cu,
 				   const struct conf_fprintf *conf, FILE *fp);
 extern size_t typedef__fprintf(const struct tag *tag_self, const struct cu *cu,
-			       FILE *fp);
+			       const struct conf_fprintf *conf, FILE *fp);
 extern size_t tag__fprintf_decl_info(const struct tag *self, FILE *fp);
-extern size_t tag__fprintf(const struct tag *self, const struct cu *cu,
+extern size_t tag__fprintf(struct tag *self, const struct cu *cu,
 			   const struct conf_fprintf *conf, FILE *fp);
 
 extern const char *function__name(struct function *self, const struct cu *cu);
 extern size_t function__fprintf_stats(const struct tag *tag_self,
-				      const struct cu *cu, FILE *fp);
+				      const struct cu *cu,
+				      FILE *fp);
 
 extern size_t lexblock__fprintf(const struct lexblock *self,
-				const struct cu *cu,
+				const struct cu *cu, struct function *function,
 				uint16_t indent, FILE *fp);
 
 extern struct cus *cus__new(struct list_head *definitions,
@@ -307,17 +473,21 @@ extern struct tag *cu__find_base_type_by_name(const struct cu *self,
 					      const char *name);
 extern struct tag *cus__find_struct_by_name(const struct cus *self,
 					    struct cu **cu,
-					    const char *name);
+					    const char *name,
+					    const int include_decls);
 extern struct tag *cus__find_function_by_name(const struct cus *self,
 					      struct cu **cu,
 					      const char *name);
+extern struct tag *cus__find_tag_by_id(const struct cus *self,
+				       struct cu **cu, const Dwarf_Off id);
 
 extern struct tag *cu__find_tag_by_id(const struct cu *self,
 				      const Dwarf_Off id);
 extern struct tag *cu__find_first_typedef_of_type(const struct cu *self,
 						  const Dwarf_Off type);
 extern struct tag *cu__find_struct_by_name(const struct cu *cu,
-					   const char *name);
+					   const char *name,
+					   const int include_decls);
 extern void	    cu__account_inline_expansions(struct cu *self);
 extern int	    cu__for_each_tag(struct cu *self,
 				     int (*iterator)(struct tag *tag,
@@ -375,6 +545,7 @@ extern struct class_member *type__find_member_by_name(const struct type *self,
 						      const char *name);
 extern uint32_t type__nr_members_of_type(const struct type *self,
 					 const Dwarf_Off type);
+extern struct class_member *type__last_member(struct type *self);
 
 static inline struct class_member *
 	class__find_member_by_name(const struct class *self, const char *name)

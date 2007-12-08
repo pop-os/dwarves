@@ -35,24 +35,29 @@ static uint16_t nr_bit_holes;
 static uint16_t hole_size_ge;
 static uint8_t show_packable;
 static uint8_t global_verbose;
-static uint8_t expand_types;
-static uint8_t rel_offset;
 static uint8_t recursive;
 static size_t cacheline_size;
 static uint8_t find_containers;
+static uint8_t find_pointers_in_structs;
 static int reorganize;
 static int show_reorg_steps;
 static char *class_name;
+static char separator = '\t';
+static Dwarf_Off class_dwarf_offset;
 
-struct structure {
-	struct list_head   node;
-	const struct class *class;
-	const struct cu	   *cu;
-	uint32_t	   nr_files;
-	uint32_t	   nr_methods;
+static struct conf_fprintf conf = {
+	.emit_stats = 1,
 };
 
-static struct structure *structure__new(const struct class *class,
+struct structure {
+	struct list_head  node;
+	struct class	  *class;
+	const struct cu	  *cu;
+	uint32_t	  nr_files;
+	uint32_t	  nr_methods;
+};
+
+static struct structure *structure__new(struct class *class,
 					const struct cu *cu)
 {
 	struct structure *self = malloc(sizeof(*self));
@@ -77,8 +82,8 @@ static struct structure *structures__find(const char *name)
 		return NULL;
 
 	list_for_each_entry(pos, &structures__list, node) {
-		const struct class *c = pos->class;
-		const char *cname = class__name(c);
+		struct class *c = pos->class;
+		const char *cname = class__name(c, pos->cu);
 
 		if (cname == NULL) {
 			if (class__include_anonymous) {
@@ -88,7 +93,7 @@ static struct structure *structures__find(const char *name)
 				if (tdef == NULL)
 					continue;
 
-				cname = class__name(tag__class(tdef));
+				cname = class__name(tag__class(tdef), pos->cu);
 				if (cname == NULL)
 					continue;
 			} else
@@ -102,7 +107,7 @@ static struct structure *structures__find(const char *name)
 	return NULL;
 }
 
-static void structures__add(const struct class *class, const struct cu *cu)
+static void structures__add(struct class *class, const struct cu *cu)
 {
 	struct structure *str = structure__new(class, cu);
 
@@ -110,49 +115,47 @@ static void structures__add(const struct class *class, const struct cu *cu)
 		list_add(&str->node, &structures__list);
 }
 
-static void nr_definitions_formatter(const struct structure *self)
+static void nr_definitions_formatter(struct structure *self)
 {
-	printf("%s: %u\n", class__name(self->class), self->nr_files);
+	printf("%s%c%u\n", class__name(self->class, self->cu), separator,
+	       self->nr_files);
 }
 
-static void nr_members_formatter(const struct structure *self)
+static void nr_members_formatter(struct structure *self)
 {
-	printf("%s: %u\n", class__name(self->class),
+	printf("%s%c%u\n", class__name(self->class, self->cu), separator,
 	       class__nr_members(self->class));
 }
 
-static void nr_methods_formatter(const struct structure *self)
+static void nr_methods_formatter(struct structure *self)
 {
-	printf("%s: %u\n", class__name(self->class), self->nr_methods);
+	printf("%s%c%u\n", class__name(self->class, self->cu), separator,
+	       self->nr_methods);
 }
 
-static void size_formatter(const struct structure *self)
+static void size_formatter(struct structure *self)
 {
-	printf("%s: %zd %u\n", class__name(self->class),
-	       class__size(self->class), self->class->nr_holes);
+	printf("%s%c%zd%c%u\n", class__name(self->class, self->cu), separator,
+	       class__size(self->class), separator,
+	       self->class->nr_holes);
 }
 
-static void class_name_len_formatter(const struct structure *self)
+static void class_name_len_formatter(struct structure *self)
 {
-	const char *name = class__name(self->class);
-	printf("%s: %zd\n", name, strlen(name));
+	const char *name = class__name(self->class, self->cu);
+	printf("%s%c%zd\n", name, separator, strlen(name));
 }
 
-static void class_name_formatter(const struct structure *self)
+static void class_name_formatter(struct structure *self)
 {
-	puts(class__name(self->class));
+	puts(class__name(self->class, self->cu));
 }
 
-static void class_formatter(const struct structure *self)
+static void class_formatter(struct structure *self)
 {
 	struct tag *typedef_alias = NULL;
 	struct tag *tag = class__tag(self->class);
-	const char *name = class__name(self->class);
-	struct conf_fprintf conf = {
-		.expand_types = expand_types,
-		.rel_offset   = rel_offset,
-		.emit_stats   = 1,
-	};
+	const char *name = class__name(self->class, self->cu);
 
 	if (name == NULL) {
 		/*
@@ -174,30 +177,33 @@ static void class_formatter(const struct structure *self)
 	}
 
 	if (typedef_alias != NULL) {
-		const struct type *tdef = tag__type(typedef_alias);
+		struct type *tdef = tag__type(typedef_alias);
 
 		conf.prefix = "typedef";
-		conf.suffix = tdef->name;
-	}
+		conf.suffix = type__name(tdef, self->cu);
+	} else
+		conf.prefix = conf.suffix = NULL;
 
 	tag__fprintf(tag, self->cu, &conf, stdout);
 
-	printf("   /* definitions: %u */\n", self->nr_files);
+	if (conf.emit_stats)
+		printf("\t/* definitions: %u */\n", self->nr_files);
+
 	putchar('\n');
 }
 
-static void print_classes(void (*formatter)(const struct structure *s))
+static void print_classes(void (*formatter)(struct structure *s))
 {
 	struct structure *pos;
 
 	list_for_each_entry(pos, &structures__list, node)
 		if (show_packable && !global_verbose) {
-			const struct class *c = pos->class;
+			struct class *c = pos->class;
 			const struct tag *t = class__tag(c);
 			const size_t orig_size = class__size(c);
 			const size_t new_size = class__size(c->priv);
 			const size_t savings = orig_size - new_size;
-			const char *name = class__name(c);
+			const char *name = class__name(c, pos->cu);
 
 			/* Anonymous struct? Try finding a typedef */
 			if (name == NULL) {
@@ -205,15 +211,21 @@ static void print_classes(void (*formatter)(const struct structure *s))
 				      cu__find_first_typedef_of_type(pos->cu,
 				      				     t->id);
 				if (tdef != NULL)
-					name = class__name(tag__class(tdef));
+					name = class__name(tag__class(tdef),
+							   pos->cu);
 			}
 			if (name != NULL)
-				printf("%-32s %5zd %5zd %5zd\n",
-				       name, orig_size, new_size, savings);
+				printf("%s%c%zd%c%zd%c%zd\n",
+				       name, separator,
+				       orig_size, separator,
+				       new_size, separator,
+				       savings);
 			else
-				printf("%s:%d %5zd %5zd %5zd\n",
-				       t->decl_file, t->decl_line,
-				       orig_size, new_size, savings);
+				printf("%s(%d)%c%zd%c%zd%c%zd\n",
+				       t->decl_file, t->decl_line, separator,
+				       orig_size, separator,
+				       new_size, separator,
+				       savings);
 		} else
 			formatter(pos);
 }
@@ -250,7 +262,7 @@ static int class__packable(struct class *self, const struct cu *cu)
 	return 0;
 }
 
-static void class__dupmsg(const struct class *self, const struct cu *cu,
+static void class__dupmsg(struct class *self, const struct cu *cu,
 			  const struct class *dup __unused,
 			  const struct cu *dup_cu,
 			  char *hdr, const char *fmt, ...)
@@ -259,7 +271,7 @@ static void class__dupmsg(const struct class *self, const struct cu *cu,
 
 	if (!*hdr)
 		printf("class: %s\nfirst: %s\ncurrent: %s\n",
-		       class__name(self), cu->name, dup_cu->name);
+		       class__name(self, cu), cu->name, dup_cu->name);
 
 	va_start(args, fmt);
 	vprintf(fmt, args);
@@ -267,7 +279,7 @@ static void class__dupmsg(const struct class *self, const struct cu *cu,
 	*hdr = 1;
 }
 
-static void class__chkdupdef(const struct class *self, const struct cu *cu,
+static void class__chkdupdef(struct class *self, const struct cu *cu,
 			     struct class *dup, const struct cu *dup_cu)
 {
 	char hdr = 0;
@@ -310,11 +322,11 @@ static struct tag *tag__filter(struct tag *tag, struct cu *cu,
 	struct class *class;
 	const char *name;
 
-	if (tag->tag != DW_TAG_structure_type)
+	if (!tag__is_struct(tag))
 		return NULL;
 
 	class = tag__class(tag);
-	name = class__name(class);
+	name = class__name(class, cu);
 
 	if (class__is_declaration(class))
 		return NULL;
@@ -327,7 +339,7 @@ static struct tag *tag__filter(struct tag *tag, struct cu *cu,
 			const struct tag *tdef =
 				cu__find_first_typedef_of_type(cu, tag->id);
 			if (tdef != NULL)
-				name = class__name(tag__class(tdef));
+				name = class__name(tag__class(tdef), cu);
 		}
 
 		if (name != NULL && strncmp(class__exclude_prefix, name,
@@ -401,14 +413,14 @@ static int nr_methods_iterator(struct tag *tag, struct cu *cu,
 			continue;
 
 		type = cu__find_tag_by_id(cu, type->type);
-		if (type == NULL || type->tag != DW_TAG_structure_type)
+		if (type == NULL || !tag__is_struct(type))
 			continue;
 
 		ctype = tag__type(type);
-		if (ctype->name == NULL)
+		if (type__name(ctype, cu) == NULL)
 			continue;
 
-		str = structures__find(ctype->name);
+		str = structures__find(type__name(ctype, cu));
 		if (str != NULL)
 			++str->nr_methods;
 	}
@@ -424,17 +436,47 @@ static int cu_nr_methods_iterator(struct cu *cu, void *cookie)
 
 static char tab[128];
 
+static void print_structs_with_pointer_to(const struct structure *s)
+{
+	struct structure *pos_structure;
+	Dwarf_Off type;
+	const char *class_name = class__name(s->class, s->cu);
+	const struct cu *current_cu = NULL;
+
+	list_for_each_entry(pos_structure, &structures__list, node) {
+		struct class *c = pos_structure->class;
+		struct class_member *pos_member;
+
+		if (pos_structure->cu != current_cu) {
+			struct tag *class;
+
+			class = cu__find_struct_by_name(pos_structure->cu, class_name, 1);
+			if (class == NULL)
+				continue;
+			current_cu = pos_structure->cu;
+			type = class->id;
+		}
+
+		type__for_each_member(&c->type, pos_member) {
+			struct tag *ctype = cu__find_tag_by_id(pos_structure->cu, pos_member->tag.type);
+
+			if (ctype->tag == DW_TAG_pointer_type && ctype->type == type)
+				printf("%s: %s\n", class__name(c, pos_structure->cu), pos_member->name);
+		}
+	}
+}
+
 static void print_containers(const struct structure *s, int ident)
 {
 	struct structure *pos;
-	const Dwarf_Off type = s->class->type.tag.id;
+	const Dwarf_Off type = s->class->type.namespace.tag.id;
 
 	list_for_each_entry(pos, &structures__list, node) {
-		const struct class *c = pos->class;
+		struct class *c = pos->class;
 		const uint32_t n = type__nr_members_of_type(&c->type, type);
 
 		if (n != 0) {
-			printf("%.*s%s", ident * 2, tab, class__name(c));
+			printf("%.*s%s", ident * 2, tab, class__name(c, pos->cu));
 			if (global_verbose)
 				printf(": %u", n);
 			putchar('\n');
@@ -464,10 +506,21 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "Show just this class"
 	},
 	{
+		.name = "find_pointers_to",
+		.key  = 'f',
+		.arg  = "CLASS_NAME",
+		.doc  = "Find pointers to CLASS_NAME"
+	},
+	{
 		.name = "contains",
 		.key  = 'i',
 		.arg  = "CLASS_NAME",
 		.doc  = "Show classes that contains CLASS_NAME"
+	},
+	{
+		.name = "show_decl_info",
+		.key  = 'I',
+		.doc  = "Show the file and line number where the tags were defined"
 	},
 	{
 		.name = "holes",
@@ -528,14 +581,36 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "show number of methods",
 	},
 	{
+		.name = "show_only_data_members",
+		.key  = 'M',
+		.doc  = "show only the members that use space in the class layout",
+	},
+	{
+		.name = "expand_pointers",
+		.key  = 'p',
+		.doc  = "expand class pointer members",
+	},
+	{
 		.name = "sizes",
 		.key  = 's',
 		.doc  = "show size of classes",
 	},
 	{
-		.name = "nr_definitions",
+		.name = "separator",
 		.key  = 't',
+		.arg  = "SEP",
+		.doc  = "use SEP as the field separator",
+	},
+	{
+		.name = "nr_definitions",
+		.key  = 'T',
 		.doc  = "show how many times struct was defined",
+	},
+	{
+		.name = "dwarf_offset",
+		.key  = 'O',
+		.arg  = "OFFSET",
+		.doc  = "Show tag with DWARF OFFSET",
 	},
 	{
 		.name = "decl_exclude",
@@ -566,6 +641,11 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "include nested (inside other structs) anonymous classes",
 	},
 	{
+		.name = "quiet",
+		.key  = 'q',
+		.doc  = "be quieter",
+	},
+	{
 		.name = "verbose",
 		.key  = 'V',
 		.doc  = "be verbose",
@@ -575,47 +655,57 @@ static const struct argp_option pahole__options[] = {
 	}
 };
 
-static void (*formatter)(const struct structure *s) = class_formatter;
+static void (*formatter)(struct structure *s) = class_formatter;
 
 static error_t pahole__options_parser(int key, char *arg,
 				      struct argp_state *state)
 {
 	switch (key) {
 	case ARGP_KEY_INIT: state->child_inputs[0] = state->input; break;
-	case 'c': cacheline_size = atoi(arg);		break;
+	case 'A': class__include_nested_anonymous = 1;	break;
+	case 'a': class__include_anonymous = 1;		break;
+	case 'B': nr_bit_holes = atoi(arg);		break;
 	case 'C': class_name = arg;			break;
+	case 'c': cacheline_size = atoi(arg);		break;
+	case 'D': decl_exclude_prefix = arg;
+		  decl_exclude_prefix_len = strlen(decl_exclude_prefix);
+							break;
 	case 'd': recursive = 1;			break;
-	case 'i': find_containers = 1;
+	case 'E': conf.expand_types = 1;		break;
+	case 'f': find_pointers_in_structs = 1;
 		  class_name = arg;			break;
 	case 'H': nr_holes = atoi(arg);			break;
+	case 'I': conf.show_decl_info = 1;		break;
+	case 'i': find_containers = 1;
+		  class_name = arg;			break;
+	case 'M': conf.show_only_data_members = 1;	break;
+	case 'm': formatter = nr_methods_formatter;	break;
+	case 'N': formatter = class_name_len_formatter;	break;
+	case 'n': formatter = nr_members_formatter;	break;
+	case 'O': class_dwarf_offset = strtoul(arg, NULL, 0);	break;
+	case 'P': show_packable	= 1;			break;
+	case 'p': conf.expand_pointers = 1;		break;
+	case 'q': conf.emit_stats = 0;
+		  conf.suppress_comments = 1;
+		  conf.suppress_offset_comment = 1;	break;
+	case 'R': reorganize = 1;			break;
+	case 'r': conf.rel_offset = 1;			break;
+	case 'S': show_reorg_steps = 1;			break;
+	case 's': formatter = size_formatter;		break;
+	case 'T': formatter = nr_definitions_formatter;	break;
+	case 't': separator = arg[0];			break;
+	case 'V': global_verbose = 1;			break;
+	case 'X': cu__exclude_prefix = arg;
+		  cu__exclude_prefix_len = strlen(cu__exclude_prefix);
+							break;
+	case 'x': class__exclude_prefix = arg;
+		  class__exclude_prefix_len = strlen(class__exclude_prefix);
+							break;
 	case 'z':
 		hole_size_ge = atoi(arg);
 		if (!global_verbose)
 			formatter = class_name_formatter;
 		break;
-	case 'B': nr_bit_holes = atoi(arg);		break;
-	case 'E': expand_types = 1;			break;
-	case 'r': rel_offset = 1;			break;
-	case 'R': reorganize = 1;			break;
-	case 'S': show_reorg_steps = 1;			break;
-	case 's': formatter = size_formatter;		break;
-	case 'n': formatter = nr_members_formatter;	break;
-	case 'N': formatter = class_name_len_formatter;	break;
-	case 'm': formatter = nr_methods_formatter;	break;
-	case 'P': show_packable	= 1;			break;
-	case 't': formatter = nr_definitions_formatter;	break;
-	case 'a': class__include_anonymous = 1;		break;
-	case 'A': class__include_nested_anonymous = 1;	break;
-	case 'D': decl_exclude_prefix = arg;
-		  decl_exclude_prefix_len = strlen(decl_exclude_prefix);
-							break;
-	case 'x': class__exclude_prefix = arg;
-		  class__exclude_prefix_len = strlen(class__exclude_prefix);
-							break;
-	case 'X': cu__exclude_prefix = arg;
-		  cu__exclude_prefix_len = strlen(cu__exclude_prefix);
-							break;
-	case 'V': global_verbose = 1;			break;
 	default:
 		return ARGP_ERR_UNKNOWN;
 	}
@@ -647,6 +737,20 @@ int main(int argc, char *argv[])
 
 	dwarves__init(cacheline_size);
 
+	if (class_dwarf_offset != 0) {
+		struct cu *cu;
+		struct tag *tag = cus__find_tag_by_id(cus, &cu,
+						      class_dwarf_offset);
+		if (tag == NULL) {
+			fprintf(stderr, "id %llx not found!\n",
+				(unsigned long long)class_dwarf_offset);
+			return EXIT_FAILURE;
+		}
+
+ 		tag__fprintf(tag, cu, &conf, stdout);
+		return EXIT_SUCCESS;
+	}
+
 	cus__for_each_cu(cus, cu_unique_iterator, NULL, cu__filter);
 	if (formatter == nr_methods_formatter)
 		cus__for_each_cu(cus, cu_nr_methods_iterator, NULL, cu__filter);
@@ -655,11 +759,6 @@ int main(int argc, char *argv[])
 
 	if (class_name != NULL) {
 		struct structure *s = structures__find(class_name);
-		struct conf_fprintf conf = {
-			.expand_types = expand_types,
-			.rel_offset   = rel_offset,
-			.emit_stats   = 1,
-		};
 
 		if (s == NULL) {
 			fprintf(stderr, "struct %s not found!\n", class_name);
@@ -700,8 +799,12 @@ int main(int argc, char *argv[])
 			}
  		} else if (find_containers)
 			print_containers(s, 0);
-		else
+ 		else if (find_pointers_in_structs)
+			print_structs_with_pointer_to(s);
+		else {
  			tag__fprintf(class__tag(s->class), s->cu, &conf, stdout);
+			putchar('\n');
+		}
 	} else
 		print_classes(formatter);
 

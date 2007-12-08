@@ -30,8 +30,7 @@ static void cus__add_fwd_decl(struct cus *self, struct type *type)
 		list_add_tail(&type->node, self->fwd_decls);
 }
 
-static struct type *cus__find_definition(const struct cus *self,
-					 const char *name)
+struct type *cus__find_definition(const struct cus *self, const char *name)
 {
 	struct type *pos;
 
@@ -39,7 +38,8 @@ static struct type *cus__find_definition(const struct cus *self,
 		return NULL;
 
 	list_for_each_entry(pos, self->definitions, node)
-		if (pos->name != NULL && strcmp(pos->name, name) == 0)
+		if (type__name(pos, NULL) != NULL &&
+		    strcmp(type__name(pos, NULL), name) == 0)
 			return pos;
 
 	return NULL;
@@ -51,13 +51,14 @@ static struct type *cus__find_fwd_decl(const struct cus *self,
 	struct type *pos;
 
 	list_for_each_entry(pos, self->fwd_decls, node)
-		if (strcmp(pos->name, name) == 0)
+		if (strcmp(type__name(pos, NULL), name) == 0)
 			return pos;
 
 	return NULL;
 }
 
 static int cus__emit_enumeration_definitions(struct cus *self, struct tag *tag,
+					     const struct cu *cu,
 					     const struct conf_fprintf *conf,
 					     FILE *fp)
 {
@@ -68,7 +69,7 @@ static int cus__emit_enumeration_definitions(struct cus *self, struct tag *tag,
 		return 0;
 
 	/* Ok, lets look at the previous CUs: */
-	if (cus__find_definition(self, etype->name) != NULL) {
+	if (cus__find_definition(self, type__name(etype, cu)) != NULL) {
 		/*
 		 * Yes, so lets mark it visited on this CU too,
 		 * to speed up the lookup.
@@ -77,8 +78,8 @@ static int cus__emit_enumeration_definitions(struct cus *self, struct tag *tag,
 		return 0;
 	}
 
-	enumeration__fprintf(tag, conf, fp);
-	fputs(";", fp);
+	enumeration__fprintf(tag, cu, conf, fp);
+	fputs(";\n", fp);
 	cus__add_definition(self, etype);
 	return 1;
 }
@@ -98,7 +99,7 @@ static int cus__emit_typedef_definitions(struct cus *self, struct cu *cu,
 		return 0;
 
 	/* Ok, lets look at the previous CUs: */
-	if (cus__find_definition(self, def->name) != NULL) {
+	if (cus__find_definition(self, type__name(def, cu)) != NULL) {
 		/*
 		 * Yes, so lets mark it visited on this CU too,
 		 * to speed up the lookup.
@@ -127,28 +128,29 @@ static int cus__emit_typedef_definitions(struct cus *self, struct cu *cu,
 		cus__emit_ftype_definitions(self, cu, tag__ftype(type), fp);
 		break;
 	case DW_TAG_enumeration_type: {
-		const struct type *ctype = tag__type(type);
+		struct type *ctype = tag__type(type);
 		struct conf_fprintf conf = {
 			.suffix = NULL,
 		};
 
 		tag__fprintf_decl_info(type, fp);
-		if (ctype->name == NULL) {
+		if (type__name(ctype, cu) == NULL) {
 			fputs("typedef ", fp);
-			conf.suffix = def->name;
-			cus__emit_enumeration_definitions(self, type, &conf, fp);
+			conf.suffix = type__name(def, cu);
+			cus__emit_enumeration_definitions(self, type, cu, &conf, fp);
 			goto out;
 		} else 
-			cus__emit_enumeration_definitions(self, type, &conf, fp);
+			cus__emit_enumeration_definitions(self, type, cu, &conf, fp);
 	}
 		break;
 	case DW_TAG_structure_type:
 	case DW_TAG_union_type: {
-		const struct type *ctype = tag__type(type);
+		struct type *ctype = tag__type(type);
 
-		if (ctype->name == NULL) {
+		if (type__name(ctype, cu) == NULL) {
 			if (cus__emit_type_definitions(self, cu, type, fp))
-				type__emit(type, cu, "typedef", def->name, fp);
+				type__emit(type, cu, "typedef",
+					   type__name(def, cu), fp);
 			goto out;
 		} else if (cus__emit_type_definitions(self, cu, type, fp))
 			type__emit(type, cu, NULL, NULL, fp);
@@ -164,7 +166,7 @@ static int cus__emit_typedef_definitions(struct cus *self, struct cu *cu,
 	 * redefine the typedef after struct __wait_queue.
 	 */
 	if (!def->definition_emitted) {
-		typedef__fprintf(tdef, cu, fp);
+		typedef__fprintf(tdef, cu, NULL, fp);
 		fputs(";\n", fp);
 	}
 out:
@@ -172,14 +174,15 @@ out:
 	return 1;
 }
 
-int cus__emit_fwd_decl(struct cus *self, struct type *ctype, FILE *fp)
+int cus__emit_fwd_decl(struct cus *self, struct type *ctype,
+		       const struct cu *cu, FILE *fp)
 {
 	/* Have we already emitted this in this CU? */
 	if (ctype->fwd_decl_emitted)
 		return 0;
 
 	/* Ok, lets look at the previous CUs: */
-	if (cus__find_fwd_decl(self, ctype->name) != NULL) {
+	if (cus__find_fwd_decl(self, type__name(ctype, cu)) != NULL) {
 		/*
 		 * Yes, so lets mark it visited on this CU too,
 		 * to speed up the lookup.
@@ -189,8 +192,8 @@ int cus__emit_fwd_decl(struct cus *self, struct type *ctype, FILE *fp)
 	}
 
 	fprintf(fp, "%s %s;\n",
-		ctype->tag.tag == DW_TAG_union_type ? "union" : "struct",
-		ctype->name);
+		tag__is_union(&ctype->namespace.tag) ? "union" : "struct",
+		type__name(ctype, cu));
 	cus__add_fwd_decl(self, ctype);
 	return 1;
 }
@@ -219,16 +222,20 @@ next_indirection:
 	case DW_TAG_typedef:
 		return cus__emit_typedef_definitions(self, cu, type, fp);
 	case DW_TAG_enumeration_type:
-		if (tag__type(type)->name != NULL) {
+		if (type__name(tag__type(type), cu) != NULL) {
+			struct conf_fprintf conf = {
+				.suffix = NULL,
+			};
 			tag__fprintf_decl_info(type, fp);
 			return cus__emit_enumeration_definitions(self, type,
-								 NULL, fp);
+								 cu, &conf, fp);
 		}
 		break;
 	case DW_TAG_structure_type:
 	case DW_TAG_union_type:
 		if (pointer)
-			return cus__emit_fwd_decl(self, tag__type(type), fp);
+			return cus__emit_fwd_decl(self, tag__type(type),
+						  cu, fp);
 		if (cus__emit_type_definitions(self, cu, type, fp))
 			type__emit(type, cu, NULL, NULL, fp);
 		return 1;
@@ -262,25 +269,22 @@ int cus__emit_type_definitions(struct cus *self, struct cu *cu,
 {
 	struct type *ctype = tag__type(tag);
 	struct class_member *pos;
-	int printed = 0;
 
 	if (ctype->definition_emitted)
 		return 0;
 
 	/* Ok, lets look at the previous CUs: */
-	if (cus__find_definition(self, ctype->name) != NULL) {
+	if (cus__find_definition(self, type__name(ctype, cu)) != NULL) {
 		ctype->definition_emitted = 1;
 		return 0;
 	}
 
 	cus__add_definition(self, ctype);
 
-	list_for_each_entry(pos, &ctype->members, tag.node)
+	type__for_each_member(ctype, pos)
 		if (cus__emit_tag_definitions(self, cu, &pos->tag, fp))
-			printed = 1;
+			fputc('\n', fp);
 
-	if (printed)
-		fputc('\n', fp);
 	return 1;
 }
 
@@ -289,19 +293,17 @@ void type__emit(struct tag *tag_self, struct cu *cu,
 {
 	struct type *ctype = tag__type(tag_self);
 
-	if (tag_self->tag == DW_TAG_structure_type)
+	if (tag__is_struct(tag_self))
 		class__find_holes(tag__class(tag_self), cu);
 
-	if (ctype->name != NULL || suffix != NULL || prefix != NULL) {
+	if (type__name(ctype, cu) != NULL ||
+	    suffix != NULL || prefix != NULL) {
 		struct conf_fprintf conf = {
 			.prefix	    = prefix,
 			.suffix	    = suffix,
 			.emit_stats = 1,
 		};
 		tag__fprintf(tag_self, cu, &conf, fp);
-
-		if (tag_self->tag != DW_TAG_structure_type)
-			fputc(';', fp);
 		fputc('\n', fp);
 	}
 }

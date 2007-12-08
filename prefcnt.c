@@ -65,9 +65,8 @@ static void refcnt_tag(struct tag *tag, const struct cu *cu)
 
 	tag->refcnt++;
 
-	if (tag->tag == DW_TAG_structure_type ||
-	    tag->tag == DW_TAG_union_type)
-		list_for_each_entry(member, &tag__type(tag)->members, tag.node)
+	if (tag__is_struct(tag) || tag__is_union(tag))
+		type__for_each_member(tag__type(tag), member)
 			refcnt_member(member, cu);
 }
 
@@ -118,7 +117,7 @@ static int refcnt_function_iterator(struct function *function,
 
 static int refcnt_tag_iterator(struct tag *tag, struct cu *cu, void *cookie)
 {
-	if (tag->tag == DW_TAG_structure_type)
+	if (tag__is_struct(tag))
 		class__find_holes(tag__class(tag), cu);
 	else if (tag->tag == DW_TAG_subprogram)
 		refcnt_function_iterator(tag__function(tag), cu, cookie);

@@ -18,15 +18,15 @@ void class__subtract_offsets_from(struct class *self, const struct cu *cu,
 				  const uint16_t size)
 {
 	struct class_member *member =
-		list_prepare_entry(from, &self->type.members, tag.node);
+		list_prepare_entry(from, class__tags(self), tag.node);
 
-	list_for_each_entry_continue(member, &self->type.members, tag.node)
-		member->offset -= size;
+	list_for_each_entry_continue(member, class__tags(self), tag.node)
+		if (member->tag.tag == DW_TAG_member)
+			member->offset -= size;
 
 	if (self->padding != 0) {
 		struct class_member *last_member =
-			list_entry(self->type.members.prev,
-				   struct class_member, tag.node);
+					type__last_member(&self->type);
 		const size_t last_member_size =
 			class_member__size(last_member, cu);
 		const ssize_t new_padding =
@@ -45,10 +45,12 @@ static struct class_member *
 				      const struct cu *cu, size_t size)
 {
 	struct class_member *member =
-		list_prepare_entry(from, &class->type.members, tag.node);
+		list_prepare_entry(from, class__tags(class), tag.node);
 	struct class_member *bitfield_head = NULL;
 
-	list_for_each_entry_continue(member, &class->type.members, tag.node) {
+	list_for_each_entry_continue(member, class__tags(class), tag.node) {
+		if (member->tag.tag != DW_TAG_member)
+			continue;
 		if (member->bit_size != 0) {
 			if (bitfield_head == NULL)
 				bitfield_head = member;
@@ -72,18 +74,25 @@ static struct class_member *
 {
 	struct class_member *member;
 
-	list_for_each_entry_reverse(member, &class->type.members, tag.node) {
+	list_for_each_entry_reverse(member, class__tags(class), tag.node) {
 		size_t member_size;
+
+		if (member->tag.tag != DW_TAG_member)
+			continue;
 
 		if (member == to)
 			break;
-
-		if (member->bit_size != 0) {
+		/*
+		 * Check if this is the first member of a bitfield.  It either
+		 * has another member before it that is not part of the current
+		 * bitfield or it is the first member of the struct.
+		 */
+		if (member->bit_size != 0 && member->offset != 0) {
 			struct class_member *prev =
 					list_entry(member->tag.node.prev,
 						   struct class_member,
 						   tag.node);
-			if (member->bit_size != 0)
+			if (prev->bit_size != 0)
 				continue;
 
 		}
@@ -97,17 +106,20 @@ static struct class_member *
 }
 
 static struct class_member *
-	class__find_next_bit_hole_of_size(const struct class *class,
+	class__find_next_bit_hole_of_size(struct class *class,
 					  struct class_member *from,
 					  size_t size)
 {
 	struct class_member *member =
-		list_prepare_entry(from, &class->type.members, tag.node);
+		list_prepare_entry(from, class__tags(class), tag.node);
 
-	list_for_each_entry_continue(member, &class->type.members, tag.node)
+	list_for_each_entry_continue(member, class__tags(class), tag.node) {
+		if (member->tag.tag != DW_TAG_member)
+			continue;
 		if (member->bit_hole != 0 &&
 		    member->bit_size <= size)
 		    return member;
+	}
 #if 0
 	/*
 	 * FIXME: Handle the case where the bit padding is on the same bitfield
@@ -122,8 +134,7 @@ static struct class_member *
 	 * i.e. if we have bit_padding
 	 */
 	if (class->bit_padding != 0)
-		return list_entry(class->type.members.prev,
-				  struct class_member, tag.node);
+		return type__last_member(&class->type);
 #endif
 	return NULL;
 }
@@ -134,6 +145,7 @@ static void class__move_member(struct class *class, struct class_member *dest,
 {
 	const size_t from_size = class_member__size(from, cu);
 	const size_t dest_size = class_member__size(dest, cu);
+	const bool from_was_last = from->tag.node.next == class__tags(class);
 	struct class_member *tail_from = from;
 	struct class_member *from_prev = list_entry(from->tag.node.prev,
 						    struct class_member,
@@ -155,7 +167,7 @@ static void class__move_member(struct class *class, struct class_member *dest,
 
 	if (from->bit_size != 0) {
 		struct class_member *pos =
-				list_prepare_entry(from, &class->type.members,
+				list_prepare_entry(from, class__tags(class),
 						   tag.node);
 		struct class_member *tmp;
 		uint8_t orig_tail_from_bit_hole;
@@ -163,8 +175,10 @@ static void class__move_member(struct class *class, struct class_member *dest,
 
 		if (verbose)
 			fprintf(fp, " bitfield('%s' ... ", from->name);
-		list_for_each_entry_safe_from(pos, tmp, &class->type.members,
+		list_for_each_entry_safe_from(pos, tmp, class__tags(class),
 					      tag.node) {
+			if (pos->tag.tag != DW_TAG_member)
+				continue;
 			/*
 			 * Have we reached the end of the bitfield?
 			 */
@@ -221,6 +235,9 @@ static void class__move_member(struct class *class, struct class_member *dest,
 					"the padding */\n",
 					from_size, from->name);
 		}
+	} else if (from_was_last) {
+		class->type.size -= from_size + class->padding;
+		class->padding = 0;
 	} else {
 		/*
 		 * See if we are adding a new hole that is bigger than
@@ -270,7 +287,7 @@ static void class__move_bit_member(struct class *class, const struct cu *cu,
 						    struct class_member,
 						    tag.node);
 	const uint8_t is_last_member = (from->tag.node.next ==
-					&class->type.members);
+					class__tags(class));
 
 	if (verbose)
 		fprintf(fp, "/* Moving '%s:%u' from after '%s' to "
@@ -345,9 +362,11 @@ static void class__demote_bitfield_members(struct class *class,
 {
 	const uint8_t bit_diff = (old_type->size - new_type->size) * 8;
 	struct class_member *member =
-		list_prepare_entry(from, &class->type.members, tag.node);
+		list_prepare_entry(from, class__tags(class), tag.node);
 
-	list_for_each_entry_from(member, &class->type.members, tag.node) {
+	list_for_each_entry_from(member, class__tags(class), tag.node) {
+		if (member->tag.tag != DW_TAG_member)
+			continue;
 		/*
 		 * Assume IA32 bitfield layout
 		 */
@@ -393,7 +412,7 @@ static int class__demote_bitfields(struct class *class, const struct cu *cu,
 	size_t current_bitfield_size = 0, size, bytes_needed, new_size;
 	int some_was_demoted = 0;
 
-	list_for_each_entry(member, &class->type.members, tag.node) {
+	type__for_each_data_member(&class->type, member) {
 		/*
 		 * Check if we are moving away from a bitfield
 		 */
@@ -432,6 +451,12 @@ static int class__demote_bitfields(struct class *class, const struct cu *cu,
 
 		old_type_tag = cu__find_tag_by_id(cu, member->tag.type);
 		new_type_tag = cu__find_base_type_of_size(cu, bytes_needed);
+
+		if (new_type_tag == NULL) {
+			fprintf(fp, "/* BRAIN FART ALERT! couldn't find a "
+				    "%zd bytes base type */\n\n", bytes_needed);
+			continue;
+		}
 		if (verbose)
 			fprintf(fp, "/* Demoting bitfield ('%s' ... '%s') "
 				"from '%s' to '%s' */\n",
@@ -455,12 +480,6 @@ static int class__demote_bitfields(struct class *class, const struct cu *cu,
 		if (member->bit_hole == 0)
 			--class->nr_bit_holes;
 		if (verbose > 1) {
-			const struct conf_fprintf conf = {
-				.type_spacing = 26,
-				.name_spacing = 23,
-				.emit_stats   = 1,
-			};
-
 			class__find_holes(class, cu);
 			class__fprintf(class, cu, NULL, fp);
 			fputc('\n', fp);
@@ -472,8 +491,7 @@ static int class__demote_bitfields(struct class *class, const struct cu *cu,
 	 * if it wasn't already demoted as part of a bitfield of more than
 	 * one member:
 	 */
-	member = list_entry(class->type.members.prev,
-			    struct class_member, tag.node);
+	member = type__last_member(&class->type);
 	if (class->bit_padding != 0 && bitfield_head == member) {
 		size = class_member__size(member, cu);
 	    	bytes_needed = (member->bit_size + 7) / 8;
@@ -528,7 +546,7 @@ static void class__reorganize_bitfields(struct class *class,
 {
 	struct class_member *member, *brother;
 restart:
-	list_for_each_entry(member, &class->type.members, tag.node) {
+	type__for_each_data_member(&class->type, member) {
 		/* See if we have a hole after this member */
 		if (member->bit_hole != 0) {
 			/*
@@ -548,15 +566,17 @@ restart:
 	}
 }
 
-static void class__fixup_bitfield_types(const struct class *self,
+static void class__fixup_bitfield_types(struct class *self,
 					struct class_member *from,
 					struct class_member *to_before,
 					Dwarf_Off type)
 {
 	struct class_member *member =
-		list_prepare_entry(from, &self->type.members, tag.node);
+		list_prepare_entry(from, class__tags(self), tag.node);
 
-	list_for_each_entry_from(member, &self->type.members, tag.node) {
+	list_for_each_entry_from(member, class__tags(self), tag.node) {
+		if (member->tag.tag != DW_TAG_member)
+			continue;
 		if (member == to_before)
 			break;
 		member->tag.type = type;
@@ -593,7 +613,7 @@ static void class__fixup_member_types(struct class *self, const struct cu *cu,
 	struct class_member *pos, *bitfield_head = NULL;
 	uint8_t fixup_was_done = 0;
 
-	list_for_each_entry(pos, &self->type.members, tag.node) {
+	type__for_each_data_member(&self->type, pos) {
 		/*
 		 * Is this bitfield member?
 		 */
@@ -642,8 +662,8 @@ static void class__fixup_member_types(struct class *self, const struct cu *cu,
 	}
 }
 
-struct class *class__reorganize(struct class *self, const struct cu *cu,
-				const int verbose, FILE *fp)
+void class__reorganize(struct class *self, const struct cu *cu,
+		       const int verbose, FILE *fp)
 {
 	struct class_member *member, *brother, *last_member;
 	size_t last_member_size;
@@ -656,11 +676,17 @@ struct class *class__reorganize(struct class *self, const struct cu *cu,
 	/* Now try to combine holes */
 restart:
 	class__find_holes(self, cu);
-	last_member = list_entry(self->type.members.prev,
-				 struct class_member, tag.node);
+	/*
+	 * It can be NULL if this class doesn't have any data members,
+	 * just inheritance entries
+	 */
+	last_member = type__last_member(&self->type);
+	if (last_member == NULL)
+		return;
+
 	last_member_size = class_member__size(last_member, cu);
 
-	list_for_each_entry(member, &self->type.members, tag.node) {
+	type__for_each_data_member(&self->type, member) {
 		/* See if we have a hole after this member */
 		if (member->hole != 0) {
 			/*
@@ -708,9 +734,9 @@ restart:
 
 	/* Now try to move members at the tail to after holes */
 	if (self->nr_holes == 0)
-		goto out;
+		return;
 
-	list_for_each_entry(member, &self->type.members, tag.node) {
+	type__for_each_data_member(&self->type, member) {
 		/* See if we have a hole after this member */
 		if (member->hole != 0) {
 			brother = class__find_last_member_of_size(self, member,
@@ -736,6 +762,4 @@ restart:
 			}
 		}
 	}
-out:
-	return self;
 }

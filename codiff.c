@@ -165,7 +165,7 @@ static int check_print_members_changes(const struct class *structure,
 	int changes = 0;
 	struct class_member *member;
 
-	list_for_each_entry(member, &structure->type.members, tag.node) {
+	type__for_each_member(&structure->type, member) {
 		struct class_member *twin =
 			class__find_member_by_name(new_structure, member->name);
 		if (twin != NULL)
@@ -183,22 +183,20 @@ static void diff_struct(const struct cu *new_cu, struct class *structure,
 	size_t len;
 	int32_t diff;
 
-	assert(class__tag_type(structure) == DW_TAG_structure_type);
+	assert(class__is_struct(structure));
 
-	if (class__size(structure) == 0 || class__name(structure) == NULL)
+	if (class__size(structure) == 0 || class__name(structure, cu) == NULL)
 		return;
 
-	new_tag = cu__find_struct_by_name(new_cu, class__name(structure));
-	if (new_tag == NULL) {
-		diff = 1;
-		goto out;
-	}
+	new_tag = cu__find_struct_by_name(new_cu, class__name(structure, cu), 0);
+	if (new_tag == NULL)
+		return;
 
 	new_structure = tag__class(new_tag);
 	if (class__size(new_structure) == 0)
 		return;
 
-	assert(class__tag_type(new_structure) == DW_TAG_structure_type);
+	assert(class__is_struct(new_structure));
 
 	diff = class__size(structure) != class__size(new_structure) ||
 	       class__nr_members(structure) != class__nr_members(new_structure) ||
@@ -206,9 +204,9 @@ static void diff_struct(const struct cu *new_cu, struct class *structure,
 			       		   new_structure, new_cu, 0);
 	if (diff == 0)
 		return;
-out:
+
 	++cu->nr_structures_changed;
-	len = strlen(class__name(structure)) + sizeof("struct");
+	len = strlen(class__name(structure, cu)) + sizeof("struct");
 	if (len > cu->max_len_changed_item)
 		cu->max_len_changed_item = len;
 	structure->priv = diff_info__new(class__tag(new_structure),
@@ -217,7 +215,7 @@ out:
 
 static int diff_tag_iterator(struct tag *tag, struct cu *cu, void *new_cu)
 {
-	if (tag->tag == DW_TAG_structure_type)
+	if (tag__is_struct(tag))
 		diff_struct(new_cu, tag__class(tag), cu);
 	else if (tag->tag == DW_TAG_subprogram)
 		diff_function(new_cu, tag__function(tag), cu);
@@ -256,23 +254,23 @@ static int find_new_classes_iterator(struct tag *tag, struct cu *cu, void *old_c
 	struct class *class;
 	size_t len;
 
-	if (tag->tag != DW_TAG_structure_type)
+	if (!tag__is_struct(tag))
 		return 0;
 
 	class = tag__class(tag);
-	if (class__name(class) == NULL)
+	if (class__name(class, cu) == NULL)
 		return 0;
 
 	if (class__size(class) == 0)
 		return 0;
 
-	if (cu__find_struct_by_name(old_cu, class__name(class)) != NULL)
+	if (cu__find_struct_by_name(old_cu, class__name(class, cu), 0) != NULL)
 		return 0;
 
 	class->priv = diff_info__new(NULL, NULL, 1);
 	++cu->nr_structures_changed;
 
-	len = strlen(class__name(class)) + sizeof("struct");
+	len = strlen(class__name(class, cu)) + sizeof("struct");
 	if (len > cu->max_len_changed_item)
 		cu->max_len_changed_item = len;
 	return 0;
@@ -371,7 +369,7 @@ static void show_nr_members_changes(const struct class *structure,
 	struct class_member *member;
 
 	/* Find the removed ones */
-	list_for_each_entry(member, &structure->type.members, tag.node) {
+	type__for_each_member(&structure->type, member) {
 		struct class_member *twin =
 			class__find_member_by_name(new_structure, member->name);
 		if (twin == NULL)
@@ -379,7 +377,7 @@ static void show_nr_members_changes(const struct class *structure,
 	}
 
 	/* Find the new ones */
-	list_for_each_entry(member, &new_structure->type.members, tag.node) {
+	type__for_each_member(&new_structure->type, member) {
 		struct class_member *twin =
 			class__find_member_by_name(structure, member->name);
 		if (twin == NULL)
@@ -387,11 +385,12 @@ static void show_nr_members_changes(const struct class *structure,
 	}
 }
 
-static void print_terse_type_changes(const struct class *structure)
+static void print_terse_type_changes(struct class *structure,
+				     const struct cu *cu)
 {
 	const char *sep = "";
 
-	printf("struct %s: ", class__name(structure));
+	printf("struct %s: ", class__name(structure, cu));
 
 	if (terse_type_changes & TCHANGEF__SIZE) {
 		fputs("size", stdout);
@@ -419,13 +418,29 @@ static void print_terse_type_changes(const struct class *structure)
 	putchar('\n');
 }
 
-static void show_diffs_structure(const struct class *structure,
+static void show_diffs_structure(struct class *structure,
 				 const struct cu *cu)
 {
 	const struct diff_info *di = structure->priv;
-	const struct class *new_structure = tag__class(di->tag);
-	int diff = (new_structure != NULL ? class__size(new_structure) : 0) -
-		   class__size(structure);
+	const struct class *new_structure;
+	int diff;
+	/*
+	 * This is when the struct was not present in the new object file.
+	 * Meaning that it either was not referenced or that it was completely
+	 * removed.
+	 */
+	if (di == NULL)
+		return;
+
+	new_structure = tag__class(di->tag);
+	/*
+	 * If there is a diff_info but its di->tag is NULL we have a new structure,
+	 * one that didn't appears in the old object. See find_new_classes_iterator.
+	 */
+	if (new_structure == NULL)
+		diff = class__size(structure);
+	else
+		diff = class__size(new_structure) - class__size(structure);
 
 	terse_type_changes = 0;
 
@@ -433,7 +448,7 @@ static void show_diffs_structure(const struct class *structure,
 		printf("  struct %-*.*s | %+4d\n",
 		       (int)(cu->max_len_changed_item - sizeof("struct")),
 		       (int)(cu->max_len_changed_item - sizeof("struct")),
-		       class__name(structure), diff);
+		       class__name(structure, cu), diff);
 
 	if (diff != 0)
 		terse_type_changes |= TCHANGEF__SIZE;
@@ -459,7 +474,7 @@ static void show_diffs_structure(const struct class *structure,
 		check_print_members_changes(structure, cu,
 					    new_structure, di->cu, 1);
 	if (show_terse_type_changes)
-		print_terse_type_changes(structure);
+		print_terse_type_changes(structure, cu);
 }
 
 static int show_function_diffs_iterator(struct tag *tag, struct cu *cu,
@@ -477,7 +492,7 @@ static int show_structure_diffs_iterator(struct tag *tag, struct cu *cu,
 {
 	struct class *class;
 
-	if (tag->tag != DW_TAG_structure_type)
+	if (!tag__is_struct(tag))
 		return 0;
 
 	class = tag__class(tag);

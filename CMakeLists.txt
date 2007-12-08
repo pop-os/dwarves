@@ -1,4 +1,6 @@
-project(pahole)
+project(pahole C)
+
+INCLUDE_DIRECTORIES( ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} )
 
 # Try to parse this later, Helio just showed me a KDE4 example to support
 # x86-64 builds.
@@ -23,6 +25,7 @@ if (NOT CMAKE_BUILD_TYPE)
 	     FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
+add_definitions(-D_GNU_SOURCE)
 find_package(DWARF REQUIRED)
 
 _set_fancy(LIB_INSTALL_DIR "${EXEC_INSTALL_PREFIX}${CMAKE_INSTALL_PREFIX}/${__LIB}" "libdir")
@@ -46,7 +49,7 @@ set(codiff_SRCS codiff.c)
 add_executable(codiff ${codiff_SRCS})
 target_link_libraries(codiff dwarves)
 
-set(ctracer_SRCS ctracer.c)
+set(ctracer_SRCS ctracer.c dutil.c)
 add_executable(ctracer ${ctracer_SRCS})
 target_link_libraries(ctracer dwarves dwarves_emit dwarves_reorganize)
 
@@ -74,14 +77,17 @@ set(prefcnt_SRCS prefcnt.c)
 add_executable(prefcnt ${prefcnt_SRCS})
 target_link_libraries(prefcnt dwarves)
 
+set(syscse_SRCS syscse.c)
+add_executable(syscse ${syscse_SRCS})
+target_link_libraries(syscse dwarves)
+
 install(TARGETS codiff ctracer dtagnames pahole pdwtags
-		pfunct pglobal prefcnt RUNTIME DESTINATION
+		pfunct pglobal prefcnt syscse RUNTIME DESTINATION
 		${CMAKE_INSTALL_PREFIX}/bin)
 install(TARGETS dwarves LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 install(TARGETS dwarves dwarves_emit dwarves_reorganize LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 install(FILES dwarves.h dwarves_emit.h dwarves_reorganize.h DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
-install(FILES ostra/ostra-cg DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
-install(FILES ostra/python/ostra.py DESTINATION /usr/share/dwarves/runtime/python)
-install(FILES lib/Makefile lib/ctracer_jprobe.c
-	      lib/ctracer_relay.c lib/ctracer_relay.h
-	DESTINATION /usr/share/dwarves/runtime)
+install(PROGRAMS ostra/ostra-cg DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
+install(FILES ostra/python/ostra.py DESTINATION ${CMAKE_INSTALL_PREFIX}/share/dwarves/runtime/python)
+install(FILES lib/Makefile lib/ctracer_relay.c lib/ctracer_relay.h lib/linux.blacklist.cu
+	DESTINATION ${CMAKE_INSTALL_PREFIX}/share/dwarves/runtime)

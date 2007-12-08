@@ -2,13 +2,13 @@
 %define libver 1
 
 Name: dwarves
-Version: 1.0
+Version: 1.2
 Release: 1
 License: GPL
 Summary: Dwarf Tools
 Group: Development/Tools
 URL: http://oops.ghostprotocols.net:81/blog
-Source: http://http://userweb.kernel.org/~acme/dwarves/%{name}-%{version}.tar.bz2
+Source: http://userweb.kernel.org/~acme/dwarves/%{name}-%{version}.tar.bz2
 BuildRequires: cmake
 BuildRequires: elfutils-devel
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
@@ -63,6 +63,7 @@ rm -rf %{buildroot}
 %files
 %defattr(0644,root,root,0755)
 %doc README.ctracer
+%doc NEWS
 %defattr(0755,root,root,0755)
 %{_bindir}/codiff
 %{_bindir}/ctracer
@@ -72,12 +73,13 @@ rm -rf %{buildroot}
 %{_bindir}/pfunct
 %{_bindir}/pglobal
 %{_bindir}/prefcnt
+%{_bindir}/syscse
 %{_bindir}/ostra-cg
 %dir %{_datadir}/dwarves/runtime/
 %dir %{_datadir}/dwarves/runtime/python/
 %defattr(0644,root,root,0755)
 %{_datadir}/dwarves/runtime/Makefile
-%{_datadir}/dwarves/runtime/ctracer_jprobe.c
+%{_datadir}/dwarves/runtime/linux.blacklist.cu
 %{_datadir}/dwarves/runtime/ctracer_relay.c
 %{_datadir}/dwarves/runtime/ctracer_relay.h
 %attr(0755,root,root) %{_datadir}/dwarves/runtime/python/ostra.py*
@@ -99,12 +101,21 @@ rm -rf %{buildroot}
 %{_libdir}/%{libname}_reorganize.so
 
 %changelog
+* Thu Dec  6 2007 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.1-1
+- 07e0974f2c3798acb8e9a2d06f6b2ece7a01c508
+- Fix a patological bitfield case
+
+* Thu Dec  6 2007 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.1-1
+- 2c01420b51e889196b42a204910b46811ab22f1a
+- ctracer now generates systemtap scripts
+- Lots of other fixes, see git changelog.
+
 * Tue May  8 2007 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.0-1
-* 161c6712f4ae1b7e2ea50df3a0d5c28310905cec
+- 161c6712f4ae1b7e2ea50df3a0d5c28310905cec
 - handle --help, -? --usage on with_executable_option()
 
 * Tue May  8 2007 Arnaldo Carvalho de Melo <acme@redhat.com>
-* b8eb5eb214f3897ea6faa3272879baa8bf2573c0
+- b8eb5eb214f3897ea6faa3272879baa8bf2573c0
 - Fix cus__loadfl detection of --executable
 
 * Sun May  6 2007 Arnaldo Carvalho de Melo <acme@redhat.com>
