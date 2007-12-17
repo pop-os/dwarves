@@ -3,8 +3,8 @@
 
 Name: dwarves
 Version: 1.3
-Release: 1
-License: GPL
+Release: 2
+License: GPLv2
 Summary: Dwarf Tools
 Group: Development/Tools
 URL: http://oops.ghostprotocols.net:81/blog
