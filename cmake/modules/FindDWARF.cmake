@@ -24,24 +24,15 @@ find_path(LIBDW_INCLUDE_DIR elfutils/libdw.h
 	~/usr/local/include
 )
 
-find_library(DWARF_LIBRARY
-	NAMES dw dwarf
-	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
-)
+set(DWARF_LIBRARY /usr/lib/libdw.a)
 
-find_library(ELF_LIBRARY
-	NAMES elf
-	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
-)
+set(ELF_LIBRARY /usr/lib/libelf.a)
 
-find_library(EBL_LIBRARY
-	NAMES ebl
-	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
-)
+set(EBL_LIBRARY /usr/lib/libebl.a)
 
 if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AND EBL_LIBRARY)
 	set(DWARF_FOUND TRUE)
-	set(DWARF_LIBRARIES ${DWARF_LIBRARY} ${ELF_LIBRARY} ${EBL_LIBRARY})
+	set(DWARF_LIBRARIES ${DWARF_LIBRARY} ${EBL_LIBRARY} ${DWARF_LIBRARY} ${ELF_LIBRARY})
 else (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AND EBL_LIBRARY)
 	set(DWARF_FOUND FALSE)
 	set(DWARF_LIBRARIES)
