@@ -1,5 +1,6 @@
-dwarves (1.0-1) unstable; urgency=low
+dwarves (1.3-1) unstable; urgency=low
 
-  * Initial release (closes: #436522).
+  * Initial release, based on Domenico Andreoli <cavok@debian.org> work.
+    Closes: #436522.
 
- -- Domenico Andreoli <cavok@debian.org>  Wed, 08 Aug 2007 04:02:11 +0200
+ -- Thomas Girard <thomas.g.girard@free.fr>  Sun, 23 Dec 2007 17:56:14 +0100

@@ -1,27 +1,13 @@
 Source: dwarves
 Priority: extra
-Maintainer: Domenico Andreoli <cavok@debian.org>
-Build-Depends: debhelper (>= 5), libelf-dev, libebl-dev, libdw-dev, cmake
-Standards-Version: 3.7.2
-Section: libs
+Maintainer: Thomas Girard <thomas.g.girard@free.fr>
+Uploaders: Domenico Andreoli <cavok@debian.org>
+Build-Depends: debhelper (>= 5), libelf-dev, libebl-dev, libdw-dev (>= 0.130), cmake
+Standards-Version: 3.7.3
+Section: utils
 Homepage: http://oops.ghostprotocols.net:81/blog
 
-Package: libdwarves-dev
-Section: libdevel
-Architecture: any
-Depends: libdwarves1 (= ${binary:Version})
-Description: development files for dwarves library
- <insert long description, indented with spaces>
-
-Package: libdwarves1
-Section: libs
-Architecture: any
-Depends: ${shlibs:Depends}
-Description: shared library for dwarves tools
- <insert long description, indented with spaces>
-
 Package: dwarves
-Section: utils
 Architecture: any
 Depends: ${shlibs:Depends}, ${python:Depends}
 Description: Advanced DWARF utilities

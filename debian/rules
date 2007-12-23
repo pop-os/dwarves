@@ -10,26 +10,19 @@ else
 	CFLAGS += -O2
 endif
 
-# shared library versions, option 1
-version=2.0.5
-major=2
-# option 2, assuming the library is created as src/.libs/libfoo.so.2.0.5 or so
-#version=`ls src/.libs/lib*.so.* | \
-# awk '{if (match($$0,/[0-9]+\.[0-9]+\.[0-9]+$$/)) print substr($$0,RSTART)}'`
-#major=`ls src/.libs/lib*.so.* | \
-# awk '{if (match($$0,/\.so\.[0-9]+$$/)) print substr($$0,RSTART+4)}'`
+export CFLAGS
 
 configure: configure-stamp
 configure-stamp:
 	dh_testdir
 	mkdir debian/build
-	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="MinSizeRel" ../..
-	touch configure-stamp
+	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None" ../..
+	touch $@
 
 build: build-stamp
 build-stamp: configure-stamp
 	dh_testdir
-	$(MAKE) -C debian/build
+	$(MAKE) VERBOSE=1 -C debian/build
 	touch $@
 
 clean:
@@ -66,7 +59,6 @@ binary-arch: build install
 	dh_compress
 	dh_fixperms
 	dh_pysupport
-	dh_makeshlibs -V "libdwarves1"
 	dh_installdeb
 	dh_shlibdeps
 	dh_gencontrol
