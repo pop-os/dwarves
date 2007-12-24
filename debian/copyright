@@ -2,6 +2,8 @@ This package was debianized by Domenico Andreoli <cavok@debian.org> on
 Wed, 08 Aug 2007 04:02:11 +0200.
 
 It was downloaded from http://userweb.kernel.org/~acme/dwarves
+and repackaged to remove files that do not comply with the DFSG.
+(See README.source for more information on this.)
 
 Upstream Author:
 

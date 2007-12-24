@@ -64,5 +64,8 @@ binary-arch: build install
 	dh_md5sums
 	dh_builddeb
 
+get-orig-source:
+	sh debian/get-orig.sh
+
 binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary install configure
+.PHONY: build clean binary-indep binary-arch binary install configure get-orig-source
