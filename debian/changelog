@@ -3,4 +3,4 @@ dwarves (1.3-1) unstable; urgency=low
   * Initial release, based on Domenico Andreoli <cavok@debian.org> work.
     Closes: #436522.
 
- -- Thomas Girard <thomas.g.girard@free.fr>  Sun, 23 Dec 2007 17:56:14 +0100
+ -- Thomas Girard <thomas.g.girard@free.fr>  Mon, 24 Dec 2007 10:14:17 +0100
