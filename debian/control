@@ -2,18 +2,18 @@ Source: dwarves
 Priority: extra
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
-Build-Depends: debhelper (>= 5), libelf-dev, libebl-dev, libdw-dev (>= 0.130), cmake
+Build-Depends: debhelper (>= 5), libelf-dev, libebl-dev, libdw-dev (>= 0.130-2), cmake
 Standards-Version: 3.7.3
 Section: utils
 Homepage: http://oops.ghostprotocols.net:81/blog
 
 Package: dwarves
 Architecture: any
-Depends: ${shlibs:Depends}, ${python:Depends}
-Description: Advanced DWARF utilities
- Tools that use the DWARF debugging information inserted in ELF binaries
- by compilers such as GCC, used by well known debuggers such as GDB,
- and more recent ones such as systemtap.
+Depends: ${shlibs:Depends}
+Description: set of advanced DWARF utilities
+ This package contains tools that use the DWARF debugging information
+ inserted in ELF binaries by the compiler. This information is already
+ used by debuggers (e.g. GDB), and more recent tools such as systemtap.
  .
  Utilities in the dwarves suite include:
  .
@@ -22,5 +22,9 @@ Description: Advanced DWARF utilities
     to achieve more cache hits.
   - codiff: a diff like tool to compare the effects changes in source
     code generate on the resulting binaries
-  - pfunct: that can be used to find all sorts of information about
-    functions, inlines, etc.
+  - pfunct: displays all sorts of information about functions, inlines, etc.
+  - pdwtags: pretty-prints DWARF information
+  - pglobal: lists global symbols
+  - prefcnt: counts DWARF tags usage
+  - syscse: system call sign extender
+  - dtagnames: lists tag names
