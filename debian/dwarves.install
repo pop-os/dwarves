@@ -1,10 +1,7 @@
 usr/bin/codiff
-usr/bin/ctracer
 usr/bin/dtagnames
-usr/bin/ostra-cg
 usr/bin/pahole
 usr/bin/pdwtags
 usr/bin/pfunct
 usr/bin/pglobal
 usr/bin/prefcnt
-usr/share/dwarves/runtime/python/ostra.py usr/share/python-support/dwarves
