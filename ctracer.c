@@ -70,12 +70,12 @@ static LIST_HEAD(cus__fwd_decls);
  */
 static const char *cu_blacklist_filename = "blacklist.cu";
 
-static struct fstrlist *cu_blacklist;
+static struct strlist *cu_blacklist;
 
 static struct cu *cu_filter(struct cu *cu)
 {
 	if (cu_blacklist != NULL &&
-	    fstrlist__has_entry(cu_blacklist, cu->name))
+	    strlist__has_entry(cu_blacklist, cu->name))
 		return NULL;
 	return cu;
 }
@@ -332,75 +332,6 @@ static void class__emit_class_state_collector(struct class *self,
 		fprintf(fp_collector, "\tmini_obj->%-*s = obj->%s;\n",
 			len, pos->name, pos->name);
 	fputs("}\n\n", fp_collector);
-}
-
-static void class__add_offsets_from(struct class *self, struct class_member *from,
-				    const uint16_t size)
-{
-	struct class_member *member =
-		list_prepare_entry(from, class__tags(self), tag.node);
-
-	list_for_each_entry_continue(member, class__tags(self), tag.node)
-		if (member->tag.tag == DW_TAG_member)
-			member->offset += size;
-}
-
-/*
- * XXX: Check this more thoroughly. Right now it is used because I was
- * to lazy to do class__remove_member properly, adjusting alignments and
- * holes as we go removing fields. Ditto for class__add_offsets_from.
- */
-static void class__fixup_alignment(struct class *self, const struct cu *cu)
-{
-	struct class_member *pos, *last_member = NULL;
-	size_t member_size;
-	size_t power2;
-
-	type__for_each_data_member(&self->type, pos) {
-		member_size = class_member__size(pos, cu);
-
-		if (last_member == NULL && pos->offset != 0) { /* paranoid! */
-			class__subtract_offsets_from(self, cu, pos,
-						     pos->offset - member_size);
-			pos->offset = 0;
-		} else for (power2 = cu->addr_size; power2 >= 2; power2 /= 2) {
-			const size_t remainder = pos->offset % power2;
-
-			if (member_size == power2) {
-				if (remainder == 0) /* perfectly aligned */
-					break;
-				if (last_member->hole >= remainder) {
-					last_member->hole -= remainder;
-					if (last_member->hole == 0)
-						--self->nr_holes;
-					pos->offset -= remainder;
-					class__subtract_offsets_from(self, cu, pos, remainder);
-				} else {
-					const size_t inc = power2 - remainder;
-
-					if (last_member->hole == 0)
-						++self->nr_holes;
-					last_member->hole += inc;
-					pos->offset += inc;
-					self->type.size += inc;
-					class__add_offsets_from(self, pos, inc);
-				}
-			}
-		}
-		 	
-		last_member = pos;
-	}
-
-	if (last_member != NULL) {
-		size_t remainder;
-		/* Now check if previous steps left bogus padding on the struct */
-		member_size = class_member__size(last_member, cu);
-		remainder = (last_member->offset + member_size) % cu->addr_size;
-		if (remainder == cu->addr_size || remainder == 4) {
-			self->type.size = last_member->offset + member_size;
-			self->padding = 0;
-		}
-	}
 }
 
 static int tag__is_base_type(const struct tag *self, const struct cu *cu)
@@ -930,7 +861,7 @@ static error_t ctracer__options_parser(int key, char *arg,
 	return 0;
 }
 
-static const char ctracer__args_doc[] = "[FILE] [CLASS]";
+static const char ctracer__args_doc[] = "FILE CLASS";
 
 static struct argp ctracer__argp = {
 	.options  = ctracer__options,
@@ -1075,7 +1006,9 @@ failure:
 
 	class__emit_ostra_converter(class, cu);
 
-	cu_blacklist = fstrlist__new(cu_blacklist_filename);
+	cu_blacklist = strlist__new(true);
+	if (cu_blacklist != NULL)
+		strlist__load(cu_blacklist, cu_blacklist_filename);
 
 	cus__for_each_cu(methods_cus, cu_find_methods_iterator,
 			 class_name, cu_filter);
@@ -1109,7 +1042,7 @@ failure:
 	fclose(fp_collector);
 	fclose(fp_functions);
 	fclose(fp_classes);
-	fstrlist__delete(cu_blacklist);
+	strlist__delete(cu_blacklist);
 
 	return EXIT_SUCCESS;
 }

@@ -13,13 +13,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "dwarves.h"
+#include "dutil.h"
 
 static int show_struct_diffs;
 static int show_function_diffs;
 static int verbose;
 static int show_terse_type_changes;
+
+static struct strlist *structs_printed;
 
 #define TCHANGEF__SIZE		(1 << 0)
 #define TCHANGEF__NR_MEMBERS	(1 << 1)
@@ -227,6 +233,7 @@ static int find_new_functions_iterator(struct tag *tfunction, struct cu *cu,
 				       void *old_cu)
 {
 	struct function *function = tag__function(tfunction);
+	struct tag *old_function;
 	const char *name;
 
 	assert(function->proto.tag.tag == DW_TAG_subprogram);
@@ -235,7 +242,9 @@ static int find_new_functions_iterator(struct tag *tfunction, struct cu *cu,
 		return 0;
 
 	name = function__name(function, cu);
-	if (cu__find_function_by_name(old_cu, name) == NULL) {
+	old_function = cu__find_function_by_name(old_cu, name);
+
+	if (old_function == NULL || tag__function(old_function)->inlined) {
 		const size_t len = strlen(name);
 		const int32_t diff = function__size(function);
 
@@ -243,7 +252,7 @@ static int find_new_functions_iterator(struct tag *tfunction, struct cu *cu,
 			cu->max_len_changed_item = len;
 		++cu->nr_functions_changed;
 		cu->function_bytes_added += diff;
-		function->priv = diff_info__new(NULL, NULL, diff);
+		function->priv = diff_info__new(old_function, cu, diff);
 	}
 
 	return 0;
@@ -278,8 +287,15 @@ static int find_new_classes_iterator(struct tag *tag, struct cu *cu, void *old_c
 
 static int find_new_tags_iterator(struct tag *tag, struct cu *cu, void *old_cu)
 {
-	if (tag->tag == DW_TAG_subprogram)
+	if (tag->tag == DW_TAG_subprogram) {
+		/*
+		 * We're not interested in aliases, just real function definitions,
+		 * where we'll know if the kind of inlining
+		 */
+		if (tag__function(tag)->abstract_origin != 0)
+			return 0;
 		return find_new_functions_iterator(tag, cu, old_cu);
+	}
 	return find_new_classes_iterator(tag, cu, old_cu);
 }
 
@@ -287,10 +303,11 @@ static int cu_find_new_tags_iterator(struct cu *new_cu, void *old_cus)
 {
 	struct cu *old_cu = cus__find_cu_by_name(old_cus, new_cu->name);
 
-	if (old_cu != NULL)
-		cu__for_each_tag(new_cu, find_new_tags_iterator,
-				 old_cu, NULL);
+	if (old_cu != NULL && cu__same_build_id(old_cu, new_cu))
+		return 0;
 
+	cu__for_each_tag(new_cu, find_new_tags_iterator,
+			 old_cu, NULL);
 	return 0;
 }
 
@@ -298,8 +315,9 @@ static int cu_diff_iterator(struct cu *cu, void *new_cus)
 {
 	struct cu *new_cu = cus__find_cu_by_name(new_cus, cu->name);
 
-	if (new_cu != NULL)
-		cu__for_each_tag(cu, diff_tag_iterator, new_cu, NULL);
+	if (new_cu != NULL && cu__same_build_id(cu, new_cu))
+		return 0;
+	cu__for_each_tag(cu, diff_tag_iterator, new_cu, NULL);
 
 	return 0;
 }
@@ -323,7 +341,9 @@ static void show_diffs_function(struct function *function, const struct cu *cu,
 	else {
 		const struct function *twin = tag__function(di->tag);
 
-		if (strcmp(function->name, twin->name) != 0)
+		if (twin->inlined)
+			puts(cookie ? " (uninlined)" : " (inlined)");
+		else if (strcmp(function->name, twin->name) != 0)
 			printf("%s: BRAIN FART ALERT: comparing %s to %s, "
 			       "should be the same name\n", __FUNCTION__,
 			       function->name, twin->name);
@@ -496,8 +516,13 @@ static int show_structure_diffs_iterator(struct tag *tag, struct cu *cu,
 		return 0;
 
 	class = tag__class(tag);
-	if (class->priv != NULL)
-		show_diffs_structure(class, cu);
+	if (class->priv != NULL) {
+		const char *name = class__name(class, cu);
+		if (!strlist__has_entry(structs_printed, name)) {
+			show_diffs_structure(class, cu);
+			strlist__add(structs_printed, name);
+		}
+	}
 	return 0;
 }
 
@@ -532,27 +557,22 @@ static int cu_show_diffs_iterator(struct cu *cu, void *cookie)
 	}
 
 	if (cu->nr_functions_changed != 0 && show_function_diffs) {
-		int kind = 0;
 		total_nr_functions_changed += cu->nr_functions_changed;
 
 		cu__for_each_tag(cu, show_function_diffs_iterator, cookie, NULL);
 		printf(" %u function%s changed", cu->nr_functions_changed,
 		       cu->nr_functions_changed > 1 ? "s" : "");
 		if (cu->function_bytes_added != 0) {
-			++kind;
 			total_function_bytes_added += cu->function_bytes_added;
 			printf(", %zd bytes added", cu->function_bytes_added);
 		}
 		if (cu->function_bytes_removed != 0) {
-			++kind;
 			total_function_bytes_removed += cu->function_bytes_removed;
 			printf(", %zd bytes removed",
 			       cu->function_bytes_removed);
 		}
-		if (kind == 2)
-			printf(", diff: %+zd",
-			       (cu->function_bytes_added -
-			        cu->function_bytes_removed));
+		printf(", diff: %+zd",
+		       cu->function_bytes_added - cu->function_bytes_removed);
 		putchar('\n');
 	}
 	return 0;
@@ -560,27 +580,20 @@ static int cu_show_diffs_iterator(struct cu *cu, void *cookie)
 
 static void print_total_function_diff(const char *filename)
 {
-	int kind = 0;
-
 	printf("\n%s:\n", filename);
 
 	printf(" %u function%s changed", total_nr_functions_changed,
 	       total_nr_functions_changed > 1 ? "s" : "");
 
-	if (total_function_bytes_added != 0) {
-		++kind;
+	if (total_function_bytes_added != 0)
 		printf(", %u bytes added", total_function_bytes_added);
-	}
 
-	if (total_function_bytes_removed != 0) {
-		++kind;
+	if (total_function_bytes_removed != 0)
 		printf(", %u bytes removed", total_function_bytes_removed);
-	}
   
-	if (kind == 2)
-		printf(", diff: %+d",
-		       (total_function_bytes_added -
-		        total_function_bytes_removed));
+	printf(", diff: %+d",
+	       (total_function_bytes_added -
+	        total_function_bytes_removed));
 	putchar('\n');
 }
 
@@ -623,7 +636,7 @@ static error_t codiff__options_parser(int key, char *arg __unused,
 	return 0;
 }
 
-static const char codiff__args_doc[] = "[OLD_FILE] [NEW_FILE]";
+static const char codiff__args_doc[] = "OLD_FILE NEW_FILE";
 
 static struct argp codiff__argp = {
 	.options  = codiff__options,
@@ -637,6 +650,7 @@ int main(int argc, char *argv[])
 	struct cus *old_cus, *new_cus;
 	char *old_filename, *new_filename;
 	char *dwfl_argv[4];
+	struct stat st;
 
 	argp_parse(&codiff__argp, argc, argv, 0, &remaining, NULL);
 
@@ -659,28 +673,46 @@ failure:
 
 	dwarves__init(0);
 
+	structs_printed = strlist__new(false);
 	old_cus = cus__new(NULL, NULL);
 	new_cus = cus__new(NULL, NULL);
-	if (old_cus == NULL || new_cus == NULL) {
+	if (old_cus == NULL || new_cus == NULL || structs_printed == NULL) {
 		fputs("codiff: insufficient memory\n", stderr);
+		return EXIT_FAILURE;
+	}
+
+	if (stat(old_filename, &st) != 0) {
+		fprintf(stderr, "codiff: %s (%s)\n", strerror(errno), old_filename);
 		return EXIT_FAILURE;
 	}
 
 	dwfl_argv[0] = argv[0];
 	dwfl_argv[1] = "-e";
-	dwfl_argv[2] = old_filename;
 	dwfl_argv[3] = NULL;
-	err = cus__loadfl(old_cus, NULL, 3, dwfl_argv);
-	if (err != 0) {
-		cus__print_error_msg("codiff", old_filename, err);
+
+	/* If old_file is a character device, leave its cus empty */
+	if (!S_ISCHR(st.st_mode)) {
+		dwfl_argv[2] = old_filename;
+		err = cus__loadfl(old_cus, NULL, 3, dwfl_argv);
+		if (err != 0) {
+			cus__print_error_msg("codiff", old_filename, err);
+			return EXIT_FAILURE;
+		}
+	}
+
+	if (stat(new_filename, &st) != 0) {
+		fprintf(stderr, "codiff: %s (%s)\n", strerror(errno), new_filename);
 		return EXIT_FAILURE;
 	}
 
-	dwfl_argv[2] = new_filename;
-	err = cus__loadfl(new_cus, NULL, 3, dwfl_argv);
-	if (err != 0) {
-		cus__print_error_msg("codiff", new_filename, err);
-		return EXIT_FAILURE;
+	/* If old_file is a character device, leave its cus empty */
+	if (!S_ISCHR(st.st_mode)) {
+		dwfl_argv[2] = new_filename;
+		err = cus__loadfl(new_cus, NULL, 3, dwfl_argv);
+		if (err != 0) {
+			cus__print_error_msg("codiff", new_filename, err);
+			return EXIT_FAILURE;
+		}
 	}
 
 	cus__for_each_cu(old_cus, cu_diff_iterator, new_cus, NULL);

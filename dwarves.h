@@ -16,12 +16,9 @@
 #include <elfutils/libdw.h>
 
 #include "list.h"
+#include "hash.h"
 
 struct argp;
-
-#ifndef __unused
-#define __unused __attribute__ ((unused))
-#endif
 
 struct cus {
 	struct list_head cus;
@@ -31,9 +28,14 @@ struct cus {
 	struct list_head *fwd_decls;
 };
 
+#define HASHTAGS__BITS 8
+#define HASHTAGS__SIZE (1UL << HASHTAGS__BITS)
+#define hashtags__fn(key) hash_64(key, HASHTAGS__BITS)
+
 struct cu {
 	struct list_head node;
 	struct list_head tags;
+	struct list_head hash_tags[HASHTAGS__SIZE];
 	struct list_head tool_list;	/* To be used by tools such as ctracer */
 	const char	 *name;
 	uint8_t		 addr_size;
@@ -51,6 +53,7 @@ struct cu {
 
 struct tag {
 	struct list_head node;
+	struct list_head hash_node;
 	Dwarf_Off	 type;
 	Dwarf_Off	 id;
 	const char	 *decl_file;
@@ -92,13 +95,22 @@ static inline struct namespace *tag__namespace(const struct tag *self)
 	return (struct namespace *)self;
 }
 
-/** 
+/**
  * namespace__for_each_tag - iterate thru all the tags
  * @self: struct namespace instance to iterate
  * @pos: struct tag iterator
  */
 #define namespace__for_each_tag(self, pos) \
 	list_for_each_entry(pos, &(self)->tags, node)
+
+/**
+ * namespace__for_each_tag_safe - safely iterate thru all the tags
+ * @self: struct namespace instance to iterate
+ * @pos: struct tag iterator
+ * @n: struct class_member temp iterator
+ */
+#define namespace__for_each_tag_safe(self, pos, n) \
+	list_for_each_entry_safe(pos, n, &(self)->tags, node)
 
 /**
  * struct type - base type for enumerations, structs and unions
@@ -111,10 +123,12 @@ struct type {
 	struct list_head node;
 	Dwarf_Off	 specification;
 	size_t		 size;
+	size_t		 size_diff;
 	uint16_t	 nr_members;
 	uint8_t		 declaration; /* only one bit used */
 	uint8_t		 definition_emitted:1;
 	uint8_t		 fwd_decl_emitted:1;
+	uint8_t		 resized:1;
 };
 
 static inline struct class *type__class(const struct type *self)
@@ -432,6 +446,7 @@ struct conf_fprintf {
 	uint8_t	   show_decl_info:1;
 	uint8_t	   show_only_data_members:1;
 	uint8_t	   no_semicolon:1;
+	uint8_t	   show_first_biggest_size_base_type_member:1;
 };
 
 extern void dwarves__init(size_t user_cacheline_size);
@@ -481,6 +496,8 @@ extern struct tag *cus__find_function_by_name(const struct cus *self,
 extern struct tag *cus__find_tag_by_id(const struct cus *self,
 				       struct cu **cu, const Dwarf_Off id);
 
+extern void cu__delete(struct cu *self);
+
 extern struct tag *cu__find_tag_by_id(const struct cu *self,
 				      const Dwarf_Off id);
 extern struct tag *cu__find_first_typedef_of_type(const struct cu *self,
@@ -488,6 +505,7 @@ extern struct tag *cu__find_first_typedef_of_type(const struct cu *self,
 extern struct tag *cu__find_struct_by_name(const struct cu *cu,
 					   const char *name,
 					   const int include_decls);
+extern bool cu__same_build_id(const struct cu *self, const struct cu *other);
 extern void	    cu__account_inline_expansions(struct cu *self);
 extern int	    cu__for_each_tag(struct cu *self,
 				     int (*iterator)(struct tag *tag,
@@ -536,10 +554,15 @@ extern int ftype__has_parm_of_type(const struct ftype *self,
 				   const struct tag *target,
 				   const struct cu *cu);
 
+extern struct class_member *
+	type__find_first_biggest_size_base_type_member(struct type *self,
+						       const struct cu *cu);
+
 extern const char *tag__name(const struct tag *self, const struct cu *cu,
 			     char *bf, size_t len);
 extern size_t tag__size(const struct tag *self, const struct cu *cu);
 extern size_t tag__nr_cachelines(const struct tag *self, const struct cu *cu);
+extern struct tag *tag__follow_typedef(struct tag *tag, const struct cu *cu);
 
 extern struct class_member *type__find_member_by_name(const struct type *self,
 						      const char *name);

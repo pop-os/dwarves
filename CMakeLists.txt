@@ -42,7 +42,7 @@ set(dwarves_reorganize_LIB_SRCS dwarves_reorganize.c)
 add_library(dwarves_reorganize STATIC ${dwarves_reorganize_LIB_SRCS})
 target_link_libraries(dwarves_reorganize ${DWARF_LIBRARIES} dwarves)
 
-set(codiff_SRCS codiff.c)
+set(codiff_SRCS codiff.c dutil.c)
 add_executable(codiff ${codiff_SRCS})
 target_link_libraries(codiff dwarves)
 

@@ -2,15 +2,15 @@
 %define libver 1
 
 Name: dwarves
-Version: 1.3
-Release: 2
+Version: 1.6
+Release: 1
 License: GPLv2
 Summary: Dwarf Tools
 Group: Development/Tools
 URL: http://oops.ghostprotocols.net:81/blog
 Source: http://userweb.kernel.org/~acme/dwarves/%{name}-%{version}.tar.bz2
 BuildRequires: cmake
-BuildRequires: elfutils-devel
+BuildRequires: elfutils-devel >= 0.130
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 %description
@@ -53,13 +53,12 @@ DWARF processing library development files
 %setup -q -c -n %{name}-%{version}
 
 %build
-cmake -D__LIB=%{_lib} -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="MinSizeRel" .
-make %{?_smp_mflags}
+%cmake .
+make VERBOSE=1 %{?_smp_mflags}
 
 %install
 rm -Rf %{buildroot}
-
-make DESTDIR=%{buildroot} install
+make install DESTDIR=%{buildroot}
 
 %post -n %{libname}%{libver} -p /sbin/ldconfig
 
@@ -109,6 +108,46 @@ rm -rf %{buildroot}
 %{_libdir}/%{libname}_reorganize.so
 
 %changelog
+* Mon Feb 11 2008 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.6-1
+- c83d935a4fd561a3807f520c126c2a61ae1f4d83
+- [DWARVES]: Use a hash table for the tags in a CU
+
+* Thu Feb  7 2008 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.5-1
+- c4e49add9e48ff08a8ba4187ea43d795af995136
+- PAHOLE: Introduce --defined_in
+- DWARVES: Another fix for DW_TAG_base_type entries without DW_AT_name
+- PAHOLE: Cope with DW_TAG_basic_type entries without DW_AT_name
+- CODIFF: Allow passing /dev/null as one of the files to compare
+- DWARVES: Allow passing NULL as self to cu__find_
+- DWARVES: Fixup usage messages
+- DWARVES: Find holes in inner, nameless structs
+- DWARVES: Adopt tag__follow_typedef from pahole
+- DWARVES: Add some destructors: tag, cu, namespace
+- CODIFF: Check if the objects are the same when we have build-id
+- DWARVES: Introduce cu__same_build_id
+- DWARVES_REORGANIZE: Proper tail padding fixup
+- DWARVES: Don't search in empty structs
+- DWARVES: Follow const and volatile tags to its ultimate types
+- PAHOLE: Add a newline after the --class_dwarf_offset output
+- PAHOLE: Expose type__find_first_biggest_size_base_type_member
+- DWARVES: Introduce type__find_first_biggest_size_base_type_member
+- PAHOLE: Account arrays properly when changing word-size
+- PAHOLE: Follow typedefs too when resizing unions
+- PAHOLE: Follow typedefs to find if they are resized structs/unions
+- PAHOLE: Check if types of struct and union members were already resized
+- DWARVES_REORGANIZE: Fixup class__fixup_alingment
+- PAHOLE: Allow changing the architecture word-size
+- DWARVES_REORGANIZE: Adopt class__add_offsets_from and class__fixup_alignment from ctracer
+- DWARVES: build id support requires a recent elfutils package
+
+* Sat Jan  5 2008 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.4-1
+- 8e099cf5d1f204e9ea1a9c8c0f1a09a43458d9d3
+- codiff fixes
+
+* Sun Dec  9 2007 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.3-2
+- c6c71398cd2481e219ea3ef63f32c6479ba4f08f
+- SPEC file adjustments to follow http://fedoraproject.org/wiki/Packaging/cmake
+
 * Sat Dec  8 2007 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.3-1
 - c4ee21aa122f51f2601893b2118b7f7902d2f410
 - Fixed bitfield byte offset handling, now there are no

@@ -39,6 +39,92 @@ void class__subtract_offsets_from(struct class *self, const struct cu *cu,
 	}
 }
 
+void class__add_offsets_from(struct class *self, struct class_member *from,
+			     const uint16_t size)
+{
+	struct class_member *member =
+		list_prepare_entry(from, class__tags(self), tag.node);
+
+	list_for_each_entry_continue(member, class__tags(self), tag.node)
+		if (member->tag.tag == DW_TAG_member)
+			member->offset += size;
+}
+
+/*
+ * XXX: Check this more thoroughly. Right now it is used because I was
+ * to lazy to do class__remove_member properly, adjusting alignments and
+ * holes as we go removing fields. Ditto for class__add_offsets_from.
+ */
+void class__fixup_alignment(struct class *self, const struct cu *cu)
+{
+	struct class_member *pos, *last_member = NULL;
+	size_t member_size;
+	size_t power2;
+
+	type__for_each_data_member(&self->type, pos) {
+		member_size = class_member__size(pos, cu);
+
+		if (last_member == NULL && pos->offset != 0) { /* paranoid! */
+			class__subtract_offsets_from(self, cu, pos,
+						     pos->offset - member_size);
+			pos->offset = 0;
+		} else if (last_member != NULL &&
+			   last_member->hole >= cu->addr_size) {
+			size_t dec = (last_member->hole / cu->addr_size) *
+				     cu->addr_size;
+
+			last_member->hole -= dec;
+			if (last_member->hole == 0)
+				--self->nr_holes;
+			pos->offset -= dec;
+			self->type.size -= dec;
+			class__subtract_offsets_from(self, cu, pos, dec);
+		} else for (power2 = cu->addr_size; power2 >= 2; power2 /= 2) {
+			const size_t remainder = pos->offset % power2;
+
+			if (member_size == power2) {
+				if (remainder == 0) /* perfectly aligned */
+					break;
+				if (last_member->hole >= remainder) {
+					last_member->hole -= remainder;
+					if (last_member->hole == 0)
+						--self->nr_holes;
+					pos->offset -= remainder;
+					class__subtract_offsets_from(self, cu, pos, remainder);
+				} else {
+					const size_t inc = power2 - remainder;
+
+					if (last_member->hole == 0)
+						++self->nr_holes;
+					last_member->hole += inc;
+					pos->offset += inc;
+					self->type.size += inc;
+					class__add_offsets_from(self, pos, inc);
+				}
+			}
+		}
+		 	
+		last_member = pos;
+	}
+
+	if (last_member != NULL) {
+		struct class_member *m =
+		 type__find_first_biggest_size_base_type_member(&self->type, cu);
+		size_t unpadded_size = last_member->offset + class_member__size(last_member, cu);
+		size_t m_size = class_member__size(m, cu), remainder;
+
+		/* google for struct zone_padding in the linux kernel for an example */
+		if (m_size == 0)
+			return;
+
+		remainder = unpadded_size % m_size;
+		if (remainder != 0) {
+			self->padding = m_size - remainder;
+			self->type.size = unpadded_size + self->padding;
+		}
+	}
+}
+
 static struct class_member *
 	class__find_next_hole_of_size(struct class *class,
 				      struct class_member *from,

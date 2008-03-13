@@ -26,6 +26,7 @@
 
 #include "list.h"
 #include "dwarves.h"
+#include "dutil.h"
 
 static const char *dwarf_tag_names[] = {
 	[DW_TAG_array_type]		  = "array_type",
@@ -300,6 +301,7 @@ static void tag__init(struct tag *self, Dwarf_Die *die)
 	dwarf_decl_line(die, &decl_line);
 	self->decl_line = decl_line;
 	self->recursivity_level = 0;
+	INIT_LIST_HEAD(&self->hash_node);
 }
 
 static struct tag *tag__new(Dwarf_Die *die)
@@ -310,6 +312,22 @@ static struct tag *tag__new(Dwarf_Die *die)
 		tag__init(self, die);
 
 	return self;
+}
+
+static void tag__delete(struct tag *self)
+{
+	assert(list_empty(&self->node));
+	free(self);
+}
+
+struct tag *tag__follow_typedef(struct tag *tag, const struct cu *cu)
+{
+	struct tag *type = cu__find_tag_by_id(cu, tag->type);
+
+	if (type->tag == DW_TAG_typedef)
+		return tag__follow_typedef(type, cu);
+
+	return type;
 }
 
 static const char *tag__accessibility(const struct tag *self)
@@ -422,6 +440,25 @@ static struct namespace *namespace__new(Dwarf_Die *die)
 	return self;
 }
 
+static void namespace__delete(struct namespace *self)
+{
+	struct tag *pos, *n;
+
+	namespace__for_each_tag_safe(self, pos, n) {
+		list_del_init(&pos->node);
+
+		/* Look for nested namespaces */
+		if (tag__is_struct(pos)    ||
+		    tag__is_union(pos)	   ||
+		    tag__is_namespace(pos) ||
+		    tag__is_enumeration(pos))
+		    	namespace__delete(tag__namespace(pos));
+		tag__delete(pos);
+	}
+
+	tag__delete(&self->tag);
+}
+
 static void type__init(struct type *self, Dwarf_Die *die)
 {
 	namespace__init(&self->namespace, die);
@@ -431,6 +468,7 @@ static void type__init(struct type *self, Dwarf_Die *die)
 	self->specification	 = attr_type(die, DW_AT_specification);
 	self->definition_emitted = 0;
 	self->fwd_decl_emitted	 = 0;
+	self->resized		 = 0;
 	self->nr_members	 = 0;
 }
 
@@ -461,6 +499,60 @@ const char *type__name(struct type *self, const struct cu *cu)
 	}
 
 	return self->namespace.name;
+}
+
+struct class_member *
+	type__find_first_biggest_size_base_type_member(struct type *self,
+						       const struct cu *cu)
+{
+	struct class_member *pos, *result = NULL;
+	size_t result_size = 0;
+
+	type__for_each_data_member(self, pos) {
+		struct tag *type = cu__find_tag_by_id(cu, pos->tag.type);
+		size_t member_size = 0, power2;
+		struct class_member *inner = NULL;
+reevaluate:
+		switch (type->tag) {
+		case DW_TAG_base_type:
+			member_size = tag__base_type(type)->size;
+			break;
+		case DW_TAG_pointer_type:
+		case DW_TAG_reference_type:
+			member_size = cu->addr_size;
+			break;
+		case DW_TAG_union_type:
+		case DW_TAG_structure_type:
+			if (tag__type(type)->nr_members == 0)
+				continue;
+			inner = type__find_first_biggest_size_base_type_member(tag__type(type), cu);
+			member_size = class_member__size(inner, cu);
+			break;
+		case DW_TAG_array_type:
+		case DW_TAG_const_type:
+		case DW_TAG_typedef:
+		case DW_TAG_volatile_type:
+			type = cu__find_tag_by_id(cu, type->type);
+			goto reevaluate;
+		case DW_TAG_enumeration_type:
+			member_size = tag__type(type)->size;
+			break;
+		}
+		
+		/* long long */
+		if (member_size > cu->addr_size)
+			return pos;
+
+		for (power2 = cu->addr_size; power2 > result_size; power2 /= 2)
+			if (member_size >= power2) {
+				if (power2 == cu->addr_size)
+					return inner ?: pos;
+				result_size = power2;
+				result = inner ?: pos;
+			}
+	}
+
+	return result;
 }
 
 size_t typedef__fprintf(const struct tag *tag_self, const struct cu *cu,
@@ -636,6 +728,11 @@ static struct cu *cu__new(const char *name, uint8_t addr_size,
 	struct cu *self = malloc(sizeof(*self) + build_id_len);
 
 	if (self != NULL) {
+		uint32_t i;
+
+		for (i = 0; i < HASHTAGS__SIZE; ++i)
+			INIT_LIST_HEAD(&self->hash_tags[i]);
+
 		INIT_LIST_HEAD(&self->tags);
 		INIT_LIST_HEAD(&self->tool_list);
 
@@ -657,9 +754,42 @@ static struct cu *cu__new(const char *name, uint8_t addr_size,
 	return self;
 }
 
+void cu__delete(struct cu *self)
+{
+	struct tag *pos, *n;
+
+	list_for_each_entry_safe(pos, n, &self->tags, node) {
+		list_del_init(&pos->node);
+
+		/* Look for nested namespaces */
+		if (tag__is_struct(pos)    ||
+		    tag__is_union(pos)	   ||
+		    tag__is_namespace(pos) ||
+		    tag__is_enumeration(pos)) {
+		    	namespace__delete(tag__namespace(pos));
+		}
+	}
+	free(self);
+}
+
+static void hashtags__hash(struct list_head *hashtable, struct tag *tag)
+{
+	struct list_head *head = hashtable + hashtags__fn(tag->id);
+
+	list_add_tail(&tag->hash_node, head);
+}
+
 static void cu__add_tag(struct cu *self, struct tag *tag)
 {
 	list_add_tail(&tag->node, &self->tags);
+	hashtags__hash(self->hash_tags, tag);
+}
+
+bool cu__same_build_id(const struct cu *self, const struct cu *other)
+{
+	return self->build_id_len != 0 &&
+	       self->build_id_len == other->build_id_len &&
+	       memcmp(self->build_id, other->build_id, self->build_id_len) == 0;
 }
 
 static const char *tag__prefix(const struct cu *cu, const uint32_t tag)
@@ -677,51 +807,19 @@ static const char *tag__prefix(const struct cu *cu, const uint32_t tag)
 	return "";
 }
 
-static struct tag *namespace__find_tag_by_id(const struct namespace *self,
-					     const Dwarf_Off id)
-{
-	struct tag *pos;
-
-	if (id == 0)
-		return NULL;
-
-	namespace__for_each_tag(self, pos) {
-		if (pos->id == id)
-			return pos;
-
-		/* Look for nested namespaces */
-		if (tag__is_struct(pos) || tag__is_union(pos) ||
-		    tag__is_namespace(pos)) {
-			 struct tag *tag =
-			    namespace__find_tag_by_id(tag__namespace(pos), id);
-			if (tag != NULL)
-				return tag;
-		}
-	}
-
-	return NULL;
-}
-
 struct tag *cu__find_tag_by_id(const struct cu *self, const Dwarf_Off id)
 {
 	struct tag *pos;
+	const struct list_head *head;
 
-	if (id == 0)
+	if (self == NULL || id == 0)
 		return NULL;
 
-	list_for_each_entry(pos, &self->tags, node) {
+	head = &self->hash_tags[hashtags__fn(id)];
+
+	list_for_each_entry(pos, head, hash_node)
 		if (pos->id == id)
 			return pos;
-
-		/* Look for nested namespaces */
-		if (tag__is_struct(pos) || tag__is_union(pos) ||
-		    tag__is_namespace(pos)) {
-			 struct tag *tag =
-			    namespace__find_tag_by_id(tag__namespace(pos), id);
-			if (tag != NULL)
-				return tag;
-		}
-	}
 
 	return NULL;
 }
@@ -731,7 +829,7 @@ struct tag *cu__find_first_typedef_of_type(const struct cu *self,
 {
 	struct tag *pos;
 
-	if (type == 0)
+	if (self == NULL || type == 0)
 		return NULL;
 
 	list_for_each_entry(pos, &self->tags, node)
@@ -745,14 +843,16 @@ struct tag *cu__find_base_type_by_name(const struct cu *self, const char *name)
 {
 	struct tag *pos;
 
-	if (name == NULL)
+	if (self == NULL || name == NULL)
 		return NULL;
 
-	list_for_each_entry(pos, &self->tags, node) {
-		if (pos->tag == DW_TAG_base_type &&
-		    strcmp(tag__base_type(pos)->name, name) == 0)
-			return pos;
-	}
+	list_for_each_entry(pos, &self->tags, node)
+		if (pos->tag == DW_TAG_base_type) {
+			const struct base_type *bt = tag__base_type(pos);
+
+			if (bt->name != NULL && strcmp(bt->name, name) == 0)
+				return pos;
+		}
 
 	return NULL;
 }
@@ -762,7 +862,7 @@ struct tag *cu__find_struct_by_name(const struct cu *self, const char *name,
 {
 	struct tag *pos;
 
-	if (name == NULL)
+	if (self == NULL || name == NULL)
 		return NULL;
 
 	list_for_each_entry(pos, &self->tags, node) {
@@ -856,7 +956,7 @@ struct tag *cu__find_function_by_name(const struct cu *self, const char *name)
 	struct tag *pos;
 	struct function *fpos;
 
-	if (name == NULL)
+	if (self == NULL || name == NULL)
 		return NULL;
 
 	list_for_each_entry(pos, &self->tags, node) {
@@ -899,6 +999,9 @@ static struct variable *cu__find_variable_by_id(const struct cu *self,
 						const Dwarf_Off id)
 {
 	struct tag *pos;
+
+	if (self == NULL)
+		return NULL;
 
 	list_for_each_entry(pos, &self->tags, node) {
 		/* Look at global variables first */
@@ -953,6 +1056,8 @@ static struct tag *list__find_tag_by_id(const struct list_head *self,
 static struct tag *cu__find_parameter_by_id(const struct cu *self,
 					    const Dwarf_Off id)
 {
+	if (self == NULL)
+		return NULL;
 	return list__find_tag_by_id(&self->tags, id);
 }
 
@@ -1027,8 +1132,15 @@ const char *tag__name(const struct tag *self, const struct cu *cu,
 	if (self == NULL)
 		strncpy(bf, "void", len);
 	else switch (self->tag) {
-	case DW_TAG_base_type:
-		strncpy(bf, tag__base_type(self)->name, len);
+	case DW_TAG_base_type: {
+		const struct base_type *bt = tag__base_type(self);
+		const char *s = "nameless base type!";
+
+		if (bt->name != NULL)
+			s = bt->name;
+
+		strncpy(bf, s, len);
+	}
 		break;
 	case DW_TAG_subprogram:
 		strncpy(bf, function__name(tag__function(self), cu), len);
@@ -1393,9 +1505,12 @@ static size_t type__fprintf(struct tag *type, const struct cu *cu,
 			printed += fprintf(fp, "struct %-*s %s",
 					   conf->type_spacing - 7,
 					   type__name(ctype, cu), name);
-		else
-			printed += class__fprintf(tag__class(type), cu,
-						  &tconf, fp);
+		else {
+			struct class *class = tag__class(type);
+
+			class__find_holes(class, cu);
+			printed += class__fprintf(class, cu, &tconf, fp);
+		}
 		break;
 	case DW_TAG_union_type:
 		ctype = tag__type(type);
@@ -2596,6 +2711,14 @@ size_t class__fprintf(struct class *self, const struct cu *cu,
 		printed += fprintf(fp, "\n%.*s/* last cacheline: %u bytes */",
 				   cconf.indent, tabs,
 				   last_cacheline);
+	if (cconf.show_first_biggest_size_base_type_member &&
+	    tself->nr_members != 0) {
+		struct class_member *m = type__find_first_biggest_size_base_type_member(tself, cu);
+
+		printed += fprintf(fp, "\n%.*s/* first biggest size base type member: %s %u %zd */",
+				   cconf.indent, tabs, m->name, m->offset,
+				   class_member__size(m, cu));
+	}
 
 	if (sum + sum_holes != tself->size - self->padding)
 		printed += fprintf(fp, "\n\n%.*s/* BRAIN FART ALERT! %zd != %u "
@@ -3019,7 +3142,7 @@ out:
 	return &ftype->tag;
 }
 
-static struct tag *die__create_new_enumeration(Dwarf_Die *die)
+static struct tag *die__create_new_enumeration(Dwarf_Die *die, struct cu *cu)
 {
 	Dwarf_Die child;
 	struct type *enumeration = type__new(die);
@@ -3046,6 +3169,7 @@ static struct tag *die__create_new_enumeration(Dwarf_Die *die)
 			oom("enumerator__new");
 
 		enumeration__add(enumeration, enumerator);
+		hashtags__hash(cu->hash_tags, &enumerator->tag);
 	} while (dwarf_siblingof(die, die) == 0);
 
 	return &enumeration->namespace.tag;
@@ -3064,6 +3188,7 @@ static void die__process_class(Dwarf_Die *die, struct type *class,
 				oom("class_member__new");
 
 			type__add_member(class, member);
+			hashtags__hash(cu->hash_tags, &member->tag);
 		}
 			continue;
 		default: {
@@ -3071,6 +3196,7 @@ static void die__process_class(Dwarf_Die *die, struct type *class,
 
 			if (tag != NULL) {
 				namespace__add_tag(&class->namespace, tag);
+				hashtags__hash(cu->hash_tags, tag);
 				if (tag->tag == DW_TAG_subprogram) {
 					struct function *fself = tag__function(tag);
 
@@ -3090,8 +3216,10 @@ static void die__process_namespace(Dwarf_Die *die,
 	do {
 		struct tag *tag = die__process_tag(die, cu);
 
-		if (tag != NULL)
+		if (tag != NULL) {
 			namespace__add_tag(namespace, tag);
+			hashtags__hash(cu->hash_tags, tag);
+		}
 	} while (dwarf_siblingof(die, die) == 0);
 }
 
@@ -3187,7 +3315,7 @@ static struct tag *__die__process_tag(Dwarf_Die *die, struct cu *cu,
 	case DW_TAG_volatile_type:
 		return die__create_new_tag(die);
 	case DW_TAG_enumeration_type:
-		return die__create_new_enumeration(die);
+		return die__create_new_enumeration(die, cu);
 	case DW_TAG_namespace:
 		return die__create_new_namespace(die, cu);
 	case DW_TAG_structure_type:
@@ -3353,9 +3481,16 @@ static int cus__load_module(Dwfl_Module *mod, void **userdata __unused,
 	Dwarf_Off off = 0, noff;
 	size_t cuhl;
 	GElf_Addr vaddr;
-	const unsigned char *build_id;
+	const unsigned char *build_id = NULL;
+	/*
+	 * FIXME: check how to do this properly using cmake to test for
+	 * the existence of dwfl_module_build_id in the elfutils libraries.
+	 */
+#if 1
 	int build_id_len = dwfl_module_build_id(mod, &build_id, &vaddr);
-
+#else
+	int build_id_len = 0;
+#endif
 	while (dwarf_nextcu(dw, off, &noff, &cuhl, NULL, NULL, NULL) == 0) {
 		Dwarf_Die die_mem, tmp;
 		Dwarf_Die *cu_die = dwarf_offdie(dw, off + cuhl, &die_mem);
