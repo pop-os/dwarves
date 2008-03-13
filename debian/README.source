@@ -1,8 +1,0 @@
-The tarball on http://userweb.kernel.org/~acme/dwarves contains ostra,
-a python script to generate callgraph information based on ctracer
-collected data.
-
-ostra, as of dwarves version 1.3, is released under the Open Software
-License version 1.1, which does not comply with the DFSG. ostra was
-therefore removed from the dwarves tarball. See the get-orig.sh script
-to see how it's done.
