@@ -6,8 +6,8 @@ dwarves-dfsg (1.9-1) unstable; urgency=low
     - patch from 1.3-1.1ubuntu1 no longer needed.
     - new manpage for pahole.
     - new program scncopy to copy ELF sections.
-    - no longer crashes when encountering a pointer in a struct.
-      Closes: #513573.
+    - fixes crash when encountering a pointer in a struct. Closes: #513573.
+    - recognizes C++ classes. Closes: #621530.
   * Remove libebl detection and use. Closes: #534529.
   * debian/control:
     - bump debhelper level to 7.
