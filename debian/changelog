@@ -1,3 +1,42 @@
+dwarves-dfsg (1.9-1) unstable; urgency=low
+
+  * Integrate changed from 1.3-1.1 NMU (thanks to Michael Banck)
+    and resynch with Ubuntu release (thanks Bhavani Shankar).
+  * New upstream release:
+    - patch from 1.3-1.1ubuntu1 no longer needed.
+    - new manpage for pahole.
+    - new program scncopy to copy ELF sections
+  * Remove libebl detection and use. Closes: #534529.
+  * debian/control:
+    - add Vcs-Git: and Vcs-Browser:
+    - bump Standards-Version: to 3.9.1
+  * debian/copyright: add missing copyright holders.
+  * debian/rules:
+    - allow to be compiled twice in a row.
+    - ensure package building aborts if a program is not installed.
+  * debian/dwarves.install:
+    - include syscse. Closes: #517180.
+    - add ctracer. See README.ctracer for information on how to use it.
+
+ -- Thomas Girard <thomas.g.girard@free.fr>  Mon, 02 May 2011 19:34:31 +0200
+
+dwarves-dfsg (1.3-1.1ubuntu1) maverick; urgency=low
+
+  * dwarwes-dfsg-1.3/src/dwarves.c:
+    + Add missing headers to fix undefined reference to `S_IS*' linker 
+      error with gcc 4.5 LP: #602367
+
+ -- Bhavani Shankar <bhavi@ubuntu.com>  Tue, 06 Jul 2010 22:20:38 +0530
+
+dwarves-dfsg (1.3-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Applied patch by Peter Green (Closes: #534084)
+    + cmake/modules/FindDWARF.cmake: Removed libebl support.
+    + debian/control (Build-Depends): Removed libebl-dev. 
+
+ -- Michael Banck <mbanck@debian.org>  Sun, 29 Nov 2009 12:45:58 +0100
+
 dwarves-dfsg (1.3-1) unstable; urgency=low
 
   * Initial release, based on Domenico Andreoli <cavok@debian.org> work.

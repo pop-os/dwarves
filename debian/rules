@@ -15,7 +15,7 @@ export CFLAGS
 configure: configure-stamp
 configure-stamp:
 	dh_testdir
-	mkdir debian/build
+	mkdir -p debian/build
 	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None" ../..
 	touch $@
 
@@ -40,6 +40,9 @@ install: build
 	dh_installdirs
 
 	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/tmp
+	# remove them for now, will be included in a next upload
+	# (requires python and matplotlib)
+	rm -Rf debian/tmp/usr/share/dwarves/runtime/python debian/tmp/usr/bin/ostra-cg
 
 # Build architecture-independent files here.
 binary-indep: build install
@@ -52,7 +55,7 @@ binary-arch: build install
 	dh_installchangelogs
 	dh_installdocs
 	dh_installexamples
-	dh_install --source=debian/tmp
+	dh_install --source=debian/tmp --fail-missing
 	dh_installman
 	dh_link
 	dh_strip

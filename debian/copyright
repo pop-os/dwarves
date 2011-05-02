@@ -1,9 +1,7 @@
 This package was debianized by Domenico Andreoli <cavok@debian.org> on
 Wed, 08 Aug 2007 04:02:11 +0200.
 
-It was downloaded from http://userweb.kernel.org/~acme/dwarves
-and repackaged to remove files that do not comply with the DFSG.
-(See README.source for more information on this.)
+It was downloaded from http://fedorapeople.org/~acme/dwarves
 
 Upstream Author:
 
@@ -11,7 +9,11 @@ Upstream Author:
 
 Copyright:
 
-    Copyright (C) 2006-2007 Arnaldo Carvalho de Melo
+    Copyright (C) 2005-2009 Arnaldo Carvalho de Melo
+    Copyright (C) 2006 Mandriva Conectiva S.A.
+    Copyright (C) 2008 David S. Miller <davem@davemloft.net>
+    Copyright (C) 2007-2009 Red Hat Inc.
+    Copyright (C) 2007 Davi E. M. Arnaut <davi@haxent.com.br>
 
 License:
 
