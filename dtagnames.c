@@ -1,4 +1,4 @@
-/* 
+/*
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
 
@@ -30,7 +30,7 @@ static int class__tag_name(struct tag *self, struct cu *cu __unused,
 
 static int cu__dump_class_tag_names(struct cu *self, void *cookie __unused)
 {
-	cu__for_each_tag(self, class__tag_name, NULL, NULL);
+	cu__for_all_tags(self, class__tag_name, NULL);
 	return 0;
 }
 
@@ -39,23 +39,25 @@ static void cus__dump_class_tag_names(struct cus *self)
 	cus__for_each_cu(self, cu__dump_class_tag_names, NULL, NULL);
 }
 
-int main(int argc, char *argv[])
+int main(int argc __unused, char *argv[])
 {
-	int err;
-	struct cus *cus = cus__new(NULL, NULL);
+	int err, rc = EXIT_FAILURE;
+	struct cus *cus = cus__new();
 
-	if (cus == NULL) {
+	if (dwarves__init(0) || cus == NULL) {
 		fputs("dtagnames: insufficient memory\n", stderr);
-		return EXIT_FAILURE;
+		goto out;
 	}
 
-	err = cus__loadfl(cus, NULL, argc, argv);
+	err = cus__load_files(cus, NULL, argv + 1);
 	if (err != 0)
-		return EXIT_FAILURE;
-
-	dwarves__init(0);
+		goto out;
 
 	cus__dump_class_tag_names(cus);
 	print_malloc_stats();
-	return EXIT_SUCCESS;
+	rc = EXIT_SUCCESS;
+out:
+	cus__delete(cus);
+	dwarves__exit();
+	return rc;
 }

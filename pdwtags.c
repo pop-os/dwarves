@@ -1,4 +1,4 @@
-/* 
+/*
   Copyright (C) 2007 Arnaldo Carvalho de Melo <acme@ghostprotocols.net>
 
   This program is free software; you can redistribute it and/or modify it
@@ -18,45 +18,81 @@ static struct conf_fprintf conf = {
 	.emit_stats	= 1,
 };
 
-static int emit_tag(struct tag *self, struct cu *cu, void *cookie __unused)
+static void emit_tag(struct tag *self, uint32_t tag_id, struct cu *cu)
 {
-	if (self->tag != DW_TAG_array_type &&
-	    self->tag != DW_TAG_base_type &&
-	    self->tag != DW_TAG_const_type &&
-	    self->tag != DW_TAG_formal_parameter &&
-	    self->tag != DW_TAG_pointer_type &&
-	    self->tag != DW_TAG_reference_type &&
-	    self->tag != DW_TAG_subroutine_type &&
-	    self->tag != DW_TAG_volatile_type) {
-		if (tag__is_struct(self))
-			class__find_holes(tag__class(self), cu);
+	printf("/* %d */\n", tag_id);
 
-		conf.no_semicolon = self->tag == DW_TAG_subprogram;
+	if (self->tag == DW_TAG_base_type) {
+		char bf[64];
+		const char *name = base_type__name(tag__base_type(self), cu,
+						   bf, sizeof(bf));
 
+		if (name == NULL)
+			printf("anonymous base_type\n");
+		else
+			puts(name);
+	} else if (self->tag == DW_TAG_pointer_type)
+		printf(" /* pointer to %lld */\n", (unsigned long long)self->type);
+	else
 		tag__fprintf(self, cu, &conf, stdout);
 
-		if (self->tag == DW_TAG_subprogram) {
-			struct function *fn = tag__function(self);
-			putchar('\n');
-			lexblock__fprintf(&fn->lexblock, cu, fn, 0, stdout);
-		}
-		puts("\n");
+	printf(" /* size: %zd */\n\n", tag__size(self, cu));
+}
+
+static int cu__emit_tags(struct cu *self)
+{
+	uint32_t i;
+	struct tag *tag;
+
+	puts("/* Types: */\n");
+	cu__for_each_type(self, i, tag)
+		emit_tag(tag, i, self);
+
+	puts("/* Functions: */\n");
+	conf.no_semicolon = true;
+	struct function *function;
+	cu__for_each_function(self, i, function) {
+		tag__fprintf(function__tag(function), self, &conf, stdout);
+		putchar('\n');
+		lexblock__fprintf(&function->lexblock, self, function, 0,
+				  &conf, stdout);
+		printf(" /* size: %zd */\n\n",
+		       tag__size(function__tag(function), self));
 	}
+	conf.no_semicolon = false;
+
+	puts("\n\n/* Variables: */\n");
+	cu__for_each_variable(self, i, tag) {
+		tag__fprintf(tag, self, NULL, stdout);
+		printf(" /* size: %zd */\n\n", tag__size(tag, self));
+	}
+
+
 	return 0;
 }
 
-static int cu__emit_tags(struct cu *self, void *cookie __unused)
+static enum load_steal_kind pdwtags_stealer(struct cu *cu,
+					    struct conf_load *conf_load __unused)
 {
-	cu__for_each_tag(self, emit_tag, NULL, NULL);
-	return 0;
+	cu__emit_tags(cu);
+	cu__delete(cu);
+	return LSK__STOLEN;
 }
 
-static void cus__emit_tags(struct cus *self)
-{
-	cus__for_each_cu(self, cu__emit_tags, NULL, NULL);
-}
+static struct conf_load pdwtags_conf_load = {
+	.steal = pdwtags_stealer,
+};
+
+/* Name and version of program.  */
+ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 
 static const struct argp_option pdwtags__options[] = {
+	{
+		.name = "format_path",
+		.key  = 'F',
+		.arg  = "FORMAT_LIST",
+		.doc  = "List of debugging formats to try"
+	},
 	{
 		.key  = 'V',
 		.name = "verbose",
@@ -71,7 +107,11 @@ static error_t pdwtags__options_parser(int key, char *arg __unused,
 				      struct argp_state *state)
 {
 	switch (key) {
-	case ARGP_KEY_INIT: state->child_inputs[0] = state->input; break;
+	case ARGP_KEY_INIT:
+		if (state->child_inputs != NULL)
+			state->child_inputs[0] = state->input;
+		break;
+	case 'F': pdwtags_conf_load.format_path = arg;	break;
 	case 'V': conf.show_decl_info = 1;		break;
 	default:  return ARGP_ERR_UNKNOWN;
 	}
@@ -88,19 +128,24 @@ static struct argp pdwtags__argp = {
 
 int main(int argc, char *argv[])
 {
-	int err;
-	struct cus *cus = cus__new(NULL, NULL);
+	int remaining, rc = EXIT_FAILURE;
+	struct cus *cus = cus__new();
 
-	if (cus == NULL) {
+	if (dwarves__init(0) || cus == NULL) {
 		fputs("pwdtags: insufficient memory\n", stderr);
-		return EXIT_FAILURE;
+		goto out;
 	}
 
-	err = cus__loadfl(cus, &pdwtags__argp, argc, argv);
-	if (err != 0)
-		return EXIT_FAILURE;
+	if (argp_parse(&pdwtags__argp, argc, argv, 0, &remaining, NULL) ||
+	    remaining == argc) {
+                argp_help(&pdwtags__argp, stderr, ARGP_HELP_SEE, argv[0]);
+                goto out;
+	}
 
-	dwarves__init(0);
-	cus__emit_tags(cus);
-	return EXIT_SUCCESS;
+	if (cus__load_files(cus, &pdwtags_conf_load, argv + remaining) == 0)
+		rc = EXIT_SUCCESS;
+out:
+	cus__delete(cus);
+	dwarves__exit();
+	return rc;
 }

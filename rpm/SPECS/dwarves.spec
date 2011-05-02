@@ -2,19 +2,19 @@
 %define libver 1
 
 Name: dwarves
-Version: 1.6
-Release: 1
+Version: 1.9
+Release: 1%{?dist}
 License: GPLv2
-Summary: Dwarf Tools
+Summary: Debugging Information Manipulation Tools
 Group: Development/Tools
 URL: http://oops.ghostprotocols.net:81/blog
-Source: http://userweb.kernel.org/~acme/dwarves/%{name}-%{version}.tar.bz2
+Source: http://fedorapeople.org/~acme/dwarves/%{name}-%{version}.tar.bz2
 BuildRequires: cmake
 BuildRequires: elfutils-devel >= 0.130
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 %description
-dwarves is a set of tools that use the DWARF debugging information inserted in
+dwarves is a set of tools that use the debugging information inserted in
 ELF binaries by compilers such as GCC, used by well known debuggers such as
 GDB, and more recent ones such as systemtap.
 
@@ -31,23 +31,20 @@ code generate on the resulting binaries.
 Another tool is pfunct, that can be used to find all sorts of information about
 functions, inlines, decisions made by the compiler about inlining, etc.
 
-The documentation about ctracer is not updated to the latest developments: it
-now generates systemtap scripts, stay tuned for improvements in this area!
-
 %package -n %{libname}%{libver}
-Summary: DWARF processing library
+Summary: Debugging information  processing library
 Group: Development/Libraries
 
 %description -n %{libname}%{libver}
-DWARF processing library
+Debugging information processing library.
 
 %package -n %{libname}%{libver}-devel
-Summary: DWARF processing library development files
+Summary: Debugging information library development files
 Group: Development/Libraries
 Requires: %{libname}%{libver} = %{version}-%{release}
 
 %description -n %{libname}%{libver}-devel
-DWARF processing library development files
+Debugging information processing library development files.
 
 %prep
 %setup -q -c -n %{name}-%{version}
@@ -80,11 +77,14 @@ rm -rf %{buildroot}
 %{_bindir}/pfunct
 %{_bindir}/pglobal
 %{_bindir}/prefcnt
+%{_bindir}/scncopy
 %{_bindir}/syscse
 %{_bindir}/ostra-cg
+%dir %{_datadir}/dwarves/
 %dir %{_datadir}/dwarves/runtime/
 %dir %{_datadir}/dwarves/runtime/python/
 %defattr(0644,root,root,0755)
+%{_mandir}/man1/pahole.1*
 %{_datadir}/dwarves/runtime/Makefile
 %{_datadir}/dwarves/runtime/linux.blacklist.cu
 %{_datadir}/dwarves/runtime/ctracer_relay.c
@@ -100,14 +100,43 @@ rm -rf %{buildroot}
 %files -n %{libname}%{libver}-devel
 %defattr(0644,root,root,0755)
 %doc MANIFEST README
-%{_includedir}/dwarves.h
-%{_includedir}/dwarves_emit.h
-%{_includedir}/dwarves_reorganize.h
+%{_includedir}/dwarves/dwarves.h
+%{_includedir}/dwarves/dwarves_emit.h
+%{_includedir}/dwarves/dwarves_reorganize.h
+%{_includedir}/dwarves/dutil.h
+%{_includedir}/dwarves/gobuffer.h
+%{_includedir}/dwarves/list.h
+%{_includedir}/dwarves/rbtree.h
+%{_includedir}/dwarves/strings.h
 %{_libdir}/%{libname}.so
 %{_libdir}/%{libname}_emit.so
 %{_libdir}/%{libname}_reorganize.so
 
 %changelog
+* Sat Nov 20 2010 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.9-1
+- New release
+
+* Fri Dec  4 2009 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.8-1
+- New release
+
+* Fri Feb 13 2009 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.7-2
+- Own /usr/share/dwarves, fixes #473645 
+
+* Fri Feb 13 2009 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.7-1
+- A CTF decoder based on work done by David S. Miller
+- Handle DW_TAG_class_type,
+- Add support for showing classes with a prefix
+- Add support to DW_TAG_ptr_to_member_type
+- Handle typedef definitions in functions
+- Print the number of members in a struct/class
+- Handle the empty base optimization trick (Zero sized C++ class)
+- codiff detect changes in the prototype even when function size doesn't change
+- pfunct: Implement --expand_types
+- Reduce memory consumption by using a strings table
+- Speed up struct search by name
+- Several minor bug fixes and infrastructure improvements.
+- Initial man page for pahole
+
 * Mon Feb 11 2008 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.6-1
 - c83d935a4fd561a3807f520c126c2a61ae1f4d83
 - [DWARVES]: Use a hash table for the tags in a CU

@@ -5,6 +5,9 @@
 #  DWARF_LIBRARIES   - List of libraries when using elf utils.
 #  DWARF_FOUND       - True if fdo found.
 
+message(STATUS "Checking availability of DWARF and ELF development libraries")
+
+INCLUDE(CheckLibraryExists)
 
 if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY)
 	# Already in cache, be silent
@@ -28,11 +31,16 @@ set(DWARF_LIBRARY /usr/lib/libdw.a)
 
 set(ELF_LIBRARY /usr/lib/libelf.a)
 
-set(EBL_LIBRARY /usr/lib/libebl.a)
-
-if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AND EBL_LIBRARY)
+if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY)
 	set(DWARF_FOUND TRUE)
-	set(DWARF_LIBRARIES ${DWARF_LIBRARY} ${EBL_LIBRARY} ${DWARF_LIBRARY} ${ELF_LIBRARY})
+	set(DWARF_LIBRARIES ${DWARF_LIBRARY} ${ELF_LIBRARY})
+
+	set(CMAKE_REQUIRED_LIBRARIES ${DWARF_LIBRARIES})
+	# check if libdw have the dwfl_module_build_id routine, i.e. if it supports the buildid
+	# mechanism to match binaries to detached debug info sections (the -debuginfo packages
+	# in distributions such as fedora). We do it against libelf because, IIRC, some distros
+	# include libdw linked statically into libelf.
+	check_library_exists(elf dwfl_module_build_id "" HAVE_DWFL_MODULE_BUILD_ID)
 else (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AND EBL_LIBRARY)
 	set(DWARF_FOUND FALSE)
 	set(DWARF_LIBRARIES)
@@ -48,23 +56,44 @@ if (DWARF_FOUND)
 	endif (NOT DWARF_FIND_QUIETLY)
 else (DWARF_FOUND)
 	if (DWARF_FIND_REQUIRED)
-		if (NOT DWARF_INCLUDE_DIR)
-			message(FATAL_ERROR "Could NOT find dwarf include dir")
-		endif (NOT DWARF_INCLUDE_DIR)
-		if (NOT LIBDW_INCLUDE_DIR)
-			message(FATAL_ERROR "Could NOT find libdw include dir")
-		endif (NOT LIBDW_INCLUDE_DIR)
-		if (NOT DWARF_LIBRARY)
-			message(FATAL_ERROR "Could NOT find libdw library")
-		endif (NOT DWARF_LIBRARY)
-		if (NOT ELF_LIBRARY)
-			message(FATAL_ERROR "Could NOT find libelf library")
-		endif (NOT ELF_LIBRARY)
-		if (NOT EBL_LIBRARY)
-			message(FATAL_ERROR "Could NOT find libebl library")
-		endif (NOT EBL_LIBRARY)
+		# Check if we are in a Red Hat (RHEL) or Fedora system to tell
+		# exactly which packages should be installed. Please send
+		# patches for other distributions.
+		find_path(FEDORA fedora-release /etc)
+		find_path(REDHAT redhat-release /etc)
+		if (FEDORA OR REDHAT)
+			if (NOT DWARF_INCLUDE_DIR OR NOT LIBDW_INCLUDE_DIR OR NOT EBL_LIBRARY)
+				message(STATUS "Please install the elfutils-devel package")
+			endif (NOT DWARF_INCLUDE_DIR OR NOT LIBDW_INCLUDE_DIR OR NOT EBL_LIBRARY)
+			if (NOT DWARF_LIBRARY)
+				message(STATUS "Please install the elfutils-libs package")
+			endif (NOT DWARF_LIBRARY)
+			if (NOT ELF_LIBRARY)
+				message(STATUS "Please install the elfutils-libelf package")
+			endif (NOT ELF_LIBRARY)
+		else (FEDORA OR REDHAT)
+			if (NOT DWARF_INCLUDE_DIR)
+				message(STATUS "Could NOT find dwarf include dir")
+			endif (NOT DWARF_INCLUDE_DIR)
+			if (NOT LIBDW_INCLUDE_DIR)
+				message(STATUS "Could NOT find libdw include dir")
+			endif (NOT LIBDW_INCLUDE_DIR)
+			if (NOT EBL_LIBRARY)
+				message(STATUS "Could NOT find libebl library")
+			endif (NOT EBL_LIBRARY)
+			if (NOT DWARF_LIBRARY)
+				message(STATUS "Could NOT find libdw library")
+			endif (NOT DWARF_LIBRARY)
+			if (NOT ELF_LIBRARY)
+				message(STATUS "Could NOT find libelf library")
+			endif (NOT ELF_LIBRARY)
+		endif (FEDORA OR REDHAT)
+		message(FATAL_ERROR "Could NOT find some ELF and DWARF libraries, please install the missing packages")
 	endif (DWARF_FIND_REQUIRED)
 endif (DWARF_FOUND)
 
 mark_as_advanced(DWARF_INCLUDE_DIR LIBDW_INCLUDE_DIR DWARF_LIBRARY ELF_LIBRARY EBL_LIBRARY)
 include_directories(${DWARF_INCLUDE_DIR} ${LIBDW_INCLUDE_DIR})
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.cmake ${CMAKE_CURRENT_SOURCE_DIR}/config.h)
+
+message(STATUS "Checking availability of DWARF and ELF development libraries - done")

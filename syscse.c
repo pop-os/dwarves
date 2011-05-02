@@ -1,4 +1,4 @@
-/* 
+/*
   Copyright (C) 2007 Arnaldo Carvalho de Melo <acme@ghostprotocols.net>
 
   System call sign extender
@@ -20,67 +20,66 @@
 static const char *prefix = "sys_";
 static size_t prefix_len = 4;
 
-static struct tag *filter(struct tag *self, struct cu *cu,
-			  void *cookie __unused)
+static bool filter(struct function *f, struct cu *cu)
 {
-	if (self->tag == DW_TAG_subprogram) {
-		struct function *f = tag__function(self);
+	if (f->proto.nr_parms != 0) {
+		const char *name = function__name(f, cu);
 
-		if (f->proto.nr_parms != 0) {
-			const char *name = function__name(f, cu);
-
-			if (strlen(name) > prefix_len &&
-			    memcmp(name, prefix, prefix_len) == 0)
-				return self;
-		}
+		if (strlen(name) > prefix_len &&
+		    memcmp(name, prefix, prefix_len) == 0)
+			return false;
 	}
-	return NULL;
+	return true;
 }
 
 static void zero_extend(const int regparm, const struct base_type *bt,
-			const char *parm)
+			struct cu *cu, const char *parm)
 {
 	const char *instr = "INVALID";
 
-	switch (bt->size) {
-	case 4: /* 32 bits */
+	switch (bt->bit_size) {
+	case 32:
 		instr = "sll";
 		break;
-	case 2: /* 16 bits */
+	case 16:
 		instr = "slw";
 		break;
-	case 1: /* 8 bits */
+	case 8:
 		instr = "slb";
 		break;
 	}
 
+	char bf[64];
 	printf("\t%s\t$a%d, $a%d, 0"
-	       "\t/* zero extend $a%d(%s %s) from %zd to 64-bit */\n",
-	       instr, regparm, regparm, regparm, bt->name, parm, bt->size * 8);
+	       "\t/* zero extend $a%d(%s %s) from %d to 64-bit */\n",
+	       instr, regparm, regparm, regparm,
+	       base_type__name(bt, cu, bf, sizeof(bf)),
+	       parm, bt->bit_size);
 }
 
-static int emit_wrapper(struct tag *self, struct cu *cu, void *cookie __unused)
+static void emit_wrapper(struct function *f, struct cu *cu)
 {
 	struct parameter *parm;
-	struct function *f = tag__function(self);
 	const char *name = function__name(f, cu);
 	int regparm = 0, needs_wrapper = 0;
 
 	function__for_each_parameter(f, parm) {
-		const Dwarf_Off type_id = parameter__type(parm, cu);
-		struct tag *type = cu__find_tag_by_id(cu, type_id);
+		const uint16_t type_id = parm->tag.type;
+		struct tag *type = cu__type(cu, type_id);
 
-		assert(type != NULL);
+		tag__assert_search_result(type);
 		if (type->tag == DW_TAG_base_type) {
 			struct base_type *bt = tag__base_type(type);
+			char bf[64];
 
-			if (bt->size < 8 &&
-			    strncmp(bt->name, "unsigned", 8) == 0) {
+			if (bt->bit_size < 64 &&
+			    strncmp(base_type__name(bt, cu, bf, sizeof(bf)),
+						    "unsigned", 8) == 0) {
 				if (!needs_wrapper) {
 					printf("wrap_%s:\n", name);
 					needs_wrapper = 1;
 				}
-				zero_extend(regparm, bt,
+				zero_extend(regparm, bt, cu,
 					    parameter__name(parm, cu));
 			}
 		}
@@ -89,20 +88,26 @@ static int emit_wrapper(struct tag *self, struct cu *cu, void *cookie __unused)
 
 	if (needs_wrapper)
 		printf("\tj\t%s\n\n", name);
-
-
-	return 0;
 }
 
 static int cu__emit_wrapper(struct cu *self, void *cookie __unused)
 {
-	return cu__for_each_tag(self, emit_wrapper, NULL, filter);
+	struct function *pos;
+	uint32_t id;
+
+	cu__for_each_function(self, id, pos)
+		if (!filter(pos, self))
+			emit_wrapper(pos, self);
+	return 0;
 }
 
 static void cus__emit_wrapper(struct cus *self)
 {
 	cus__for_each_cu(self, cu__emit_wrapper, NULL, NULL);
 }
+
+/* Name and version of program.  */
+ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 
 static const struct argp_option options[] = {
 	{
@@ -120,7 +125,8 @@ static error_t options_parser(int key, char *arg, struct argp_state *state)
 {
 	switch (key) {
 	case ARGP_KEY_INIT:
-		state->child_inputs[0] = state->input;
+		if (state->child_inputs != NULL)
+			state->child_inputs[0] = state->input;
 		break;
 	case 'p':
 		prefix = arg;
@@ -142,15 +148,20 @@ static struct argp argp = {
 
 int main(int argc, char *argv[])
 {
-	int err;
-	struct cus *cus = cus__new(NULL, NULL);
+	int err, remaining;
+	struct cus *cus = cus__new();
 
 	if (cus == NULL) {
 		fprintf(stderr, "%s: insufficient memory\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 
-	err = cus__loadfl(cus, &argp, argc, argv);
+	if (argp_parse(&argp, argc, argv, 0, &remaining, NULL) ||
+	    remaining == argc) {
+                argp_help(&argp, stderr, ARGP_HELP_SEE, argv[0]);
+                return EXIT_FAILURE;
+	}
+	err = cus__load_files(cus, NULL, argv + remaining);
 	if (err != 0)
 		return EXIT_FAILURE;
 
