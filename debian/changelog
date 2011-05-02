@@ -13,6 +13,7 @@ dwarves-dfsg (1.9-1) unstable; urgency=low
     - bump debhelper level to 7.
     - add Vcs-Git: and Vcs-Browser:
     - bump Standards-Version: to 3.9.2.
+    - add zlib1g-dev build dependency.
   * debian/copyright: add missing copyright holders.
   * debian/rules:
     - allow to be compiled twice in a row.
