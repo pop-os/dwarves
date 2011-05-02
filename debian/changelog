@@ -8,6 +8,7 @@ dwarves-dfsg (1.9-1) unstable; urgency=low
     - new program scncopy to copy ELF sections.
     - fixes crash when encountering a pointer in a struct. Closes: #513573.
     - recognizes C++ classes. Closes: #621530.
+    - no longer FTBFS with gcc 4.6. Closes: #625158.
   * Remove libebl detection and use. Closes: #534529.
   * debian/control:
     - bump debhelper level to 7.
