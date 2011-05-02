@@ -20,5 +20,5 @@ License:
     GNU General Public License, version 2, found in
     /usr/share/common-licenses/GPL-2 on Debian systems.
 
-The Debian packaging is (C) 2007, Domenico Andreoli <cavok@debian.org> and
-is licensed under the GPL, see `/usr/share/common-licenses/GPL'.
+The Debian packaging is Copyright (C) 2007, Domenico Andreoli <cavok@debian.org>
+and is licensed under the GPL, see `/usr/share/common-licenses/GPL'.

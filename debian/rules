@@ -29,7 +29,7 @@ clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-stamp configure-stamp
-	-$(MAKE) -C debian/build clean
+	[ ! -f debian/build/Makefile ] || $(MAKE) -C debian/build clean
 	rm -rf debian/build
 	dh_clean
 

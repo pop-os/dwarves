@@ -2,8 +2,8 @@ Source: dwarves-dfsg
 Priority: extra
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
-Build-Depends: debhelper (>= 7), libelf-dev, libdw-dev (>= 0.141-1), cmake (>= 2.4.8)
-Standards-Version: 3.9.1
+Build-Depends: debhelper (>= 7), libelf-dev, libdw-dev (>= 0.141), cmake (>= 2.4.8)
+Standards-Version: 3.9.2
 Section: utils
 Vcs-Git: git://git.debian.org/collab-maint/pkg-dwarves.git
 Vcs-Browser: http://git.debian.org/?p=collab-maint/pkg-dwarves.git;a=summary
@@ -11,7 +11,7 @@ Homepage: http://oops.ghostprotocols.net:81/blog
 
 Package: dwarves
 Architecture: any
-Depends: ${shlibs:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: set of advanced DWARF utilities
  This package contains tools that use the DWARF debugging information
  inserted in ELF binaries by the compiler. This information is already

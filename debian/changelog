@@ -10,7 +10,7 @@ dwarves-dfsg (1.9-1) unstable; urgency=low
   * debian/control:
     - bump debhelper level to 7.
     - add Vcs-Git: and Vcs-Browser:
-    - bump Standards-Version: to 3.9.1.
+    - bump Standards-Version: to 3.9.2.
   * debian/copyright: add missing copyright holders.
   * debian/rules:
     - allow to be compiled twice in a row.
@@ -20,6 +20,7 @@ dwarves-dfsg (1.9-1) unstable; urgency=low
     - include syscse. Closes: #517180.
     - add ctracer. See README.ctracer for information on how to use it.
   * Switch to dpkg-source 3.0 (quilt) format.
+  * Fix many lintian warnings.
 
  -- Thomas Girard <thomas.g.girard@free.fr>  Mon, 02 May 2011 19:34:31 +0200
 
