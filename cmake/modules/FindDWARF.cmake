@@ -27,8 +27,8 @@ find_path(LIBDW_INCLUDE_DIR elfutils/libdw.h
 	~/usr/local/include
 )
 
-set(DWARF_LIBRARY /usr/lib/libdw.so)
-set(ELF_LIBRARY /usr/lib/libelf.so)
+set(DWARF_LIBRARY /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libdw.so)
+set(ELF_LIBRARY /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libelf.so)
 
 if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY)
 	set(DWARF_FOUND TRUE)
