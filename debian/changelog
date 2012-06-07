@@ -1,3 +1,11 @@
+dwarves-dfsg (1.10-1) unstable; urgency=low
+
+  * New upstram release.
+  * Record patches using dpkg-source --commit. Closes: #643102.
+  * Use MultiArch elfutils location. Closes: #665054.
+
+ -- Thomas Girard <thomas.g.girard@free.fr>  Thu, 07 Jun 2012 23:30:59 +0200
+
 dwarves-dfsg (1.9-1) unstable; urgency=low
 
   * Acknowledge 1.3-1.1 NMU (thanks to Michael Banck) and resynch with
