@@ -3,11 +3,11 @@ Priority: extra
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
 Build-Depends: debhelper (>= 7), libelf-dev, libdw-dev (>= 0.141), cmake (>= 2.4.8), zlib1g-dev
-Standards-Version: 3.9.2
+Standards-Version: 3.9.3
 Section: utils
 Vcs-Git: git://git.debian.org/collab-maint/pkg-dwarves.git
 Vcs-Browser: http://git.debian.org/?p=collab-maint/pkg-dwarves.git;a=summary
-Homepage: http://oops.ghostprotocols.net:81/blog
+Homepage:  http://acmel.wordpress.com
 
 Package: dwarves
 Architecture: any

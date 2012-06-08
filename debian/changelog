@@ -3,8 +3,12 @@ dwarves-dfsg (1.10-1) unstable; urgency=low
   * New upstram release.
   * Record patches using dpkg-source --commit. Closes: #643102.
   * Use MultiArch elfutils location. Closes: #665054.
+  * debian/control: change homepage to new location.
+  * debian/watch: change source tarball location.
+  * debian/control: bump Standards-Version: to 3.9.3. No changes needed.
+  * debian/rules: add missing build-arch and build-indep targets.
 
- -- Thomas Girard <thomas.g.girard@free.fr>  Thu, 07 Jun 2012 23:30:59 +0200
+ -- Thomas Girard <thomas.g.girard@free.fr>  Fri, 08 Jun 2012 20:55:03 +0200
 
 dwarves-dfsg (1.9-1) unstable; urgency=low
 

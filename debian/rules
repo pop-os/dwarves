@@ -19,7 +19,9 @@ configure-stamp:
 	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None" ../..
 	touch $@
 
-build: build-stamp
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
 build-stamp: configure-stamp
 	dh_testdir
 	$(MAKE) VERBOSE=1 -C debian/build
