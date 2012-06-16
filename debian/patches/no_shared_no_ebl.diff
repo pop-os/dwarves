@@ -49,27 +49,27 @@ Last-Update: 2012-06-07
  install(FILES ostra/python/ostra.py DESTINATION ${CMAKE_INSTALL_PREFIX}/share/dwarves/runtime/python)
 --- dwarves-dfsg-1.10.orig/cmake/modules/FindDWARF.cmake
 +++ dwarves-dfsg-1.10/cmake/modules/FindDWARF.cmake
-@@ -27,24 +27,12 @@ find_path(LIBDW_INCLUDE_DIR elfutils/lib
- 	~/usr/local/include
+@@ -29,22 +29,19 @@ find_path(LIBDW_INCLUDE_DIR elfutils/lib
+ 
+ find_library(DWARF_LIBRARY
+ 	NAMES dw dwarf
+-	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
++	PATHS /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE} /usr/lib
++	NO_DEFAULT_PATH
  )
  
--find_library(DWARF_LIBRARY
--	NAMES dw dwarf
+ find_library(ELF_LIBRARY
+ 	NAMES elf
 -	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
--)
--
--find_library(ELF_LIBRARY
--	NAMES elf
--	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
--)
--
++	PATHS /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE} /usr/lib
++	NO_DEFAULT_PATH
+ )
+ 
 -find_library(EBL_LIBRARY
 -	NAMES ebl
 -	PATHS /usr/lib /usr/local/lib /usr/lib64 /usr/local/lib64 ~/usr/local/lib ~/usr/local/lib64
 -)
-+set(DWARF_LIBRARY /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libdw.so)
-+set(ELF_LIBRARY /usr/lib/${CMAKE_LIBRARY_ARCHITECTURE}/libelf.so)
- 
+-
 -if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AND EBL_LIBRARY)
 +if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY)
  	set(DWARF_FOUND TRUE)
@@ -78,7 +78,7 @@ Last-Update: 2012-06-07
  
  	set(CMAKE_REQUIRED_LIBRARIES ${DWARF_LIBRARIES})
  	# check if libdw have the dwfl_module_build_id routine, i.e. if it supports the buildid
-@@ -52,10 +40,10 @@ if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_
+@@ -52,10 +49,10 @@ if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_
  	# in distributions such as fedora). We do it against libelf because, IIRC, some distros
  	# include libdw linked statically into libelf.
  	check_library_exists(elf dwfl_module_build_id "" HAVE_DWFL_MODULE_BUILD_ID)
@@ -91,7 +91,7 @@ Last-Update: 2012-06-07
  
  if (DWARF_FOUND)
  	if (NOT DWARF_FIND_QUIETLY)
-@@ -63,7 +51,6 @@ if (DWARF_FOUND)
+@@ -63,7 +60,6 @@ if (DWARF_FOUND)
  		message(STATUS "Found elfutils/libdw.h header: ${LIBDW_INCLUDE_DIR}")
  		message(STATUS "Found libdw library: ${DWARF_LIBRARY}")
  		message(STATUS "Found libelf library: ${ELF_LIBRARY}")
@@ -99,7 +99,7 @@ Last-Update: 2012-06-07
  	endif (NOT DWARF_FIND_QUIETLY)
  else (DWARF_FOUND)
  	if (DWARF_FIND_REQUIRED)
-@@ -73,9 +60,9 @@ else (DWARF_FOUND)
+@@ -73,9 +69,9 @@ else (DWARF_FOUND)
  		find_path(FEDORA fedora-release /etc)
  		find_path(REDHAT redhat-release /etc)
  		if (FEDORA OR REDHAT)
@@ -111,7 +111,7 @@ Last-Update: 2012-06-07
  			if (NOT DWARF_LIBRARY)
  				message(STATUS "Please install the elfutils-libs package")
  			endif (NOT DWARF_LIBRARY)
-@@ -89,9 +76,6 @@ else (DWARF_FOUND)
+@@ -89,9 +85,6 @@ else (DWARF_FOUND)
  			if (NOT LIBDW_INCLUDE_DIR)
  				message(STATUS "Could NOT find libdw include dir")
  			endif (NOT LIBDW_INCLUDE_DIR)
@@ -121,7 +121,7 @@ Last-Update: 2012-06-07
  			if (NOT DWARF_LIBRARY)
  				message(STATUS "Could NOT find libdw library")
  			endif (NOT DWARF_LIBRARY)
-@@ -103,7 +87,7 @@ else (DWARF_FOUND)
+@@ -103,7 +96,7 @@ else (DWARF_FOUND)
  	endif (DWARF_FIND_REQUIRED)
  endif (DWARF_FOUND)
  
