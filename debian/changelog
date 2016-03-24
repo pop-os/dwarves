@@ -1,3 +1,12 @@
+dwarves-dfsg (1.10-2.1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+
+  [ Robie Basak ]
+  * Fix FTBFS with newer elfutils. (Closes: #764484)
+
+ -- James Cowgill <jcowgill@debian.org>  Thu, 24 Mar 2016 13:01:08 +0000
+
 dwarves-dfsg (1.10-2) unstable; urgency=low
 
   * Make sure CMake uses standard library location if host has no
