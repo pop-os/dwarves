@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2007 Arnaldo Carvalho de Melo <acme@ghostprotocols.net>
+  Copyright (C) 2007-2016 Arnaldo Carvalho de Melo <acme@kernel.org>
 
   System call sign extender
 
@@ -90,20 +90,20 @@ static void emit_wrapper(struct function *f, struct cu *cu)
 		printf("\tj\t%s\n\n", name);
 }
 
-static int cu__emit_wrapper(struct cu *self, void *cookie __unused)
+static int cu__emit_wrapper(struct cu *cu, void *cookie __unused)
 {
 	struct function *pos;
 	uint32_t id;
 
-	cu__for_each_function(self, id, pos)
-		if (!filter(pos, self))
-			emit_wrapper(pos, self);
+	cu__for_each_function(cu, id, pos)
+		if (!filter(pos, cu))
+			emit_wrapper(pos, cu);
 	return 0;
 }
 
-static void cus__emit_wrapper(struct cus *self)
+static void cus__emit_wrapper(struct cus *cu)
 {
-	cus__for_each_cu(self, cu__emit_wrapper, NULL, NULL);
+	cus__for_each_cu(cu, cu__emit_wrapper, NULL, NULL);
 }
 
 /* Name and version of program.  */
@@ -162,8 +162,10 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
 	}
 	err = cus__load_files(cus, NULL, argv + remaining);
-	if (err != 0)
+	if (err != 0) {
+		cus__fprintf_load_files_err(cus, "syscse", argv + remaining, err, stderr);
 		return EXIT_FAILURE;
+	}
 
 	cus__emit_wrapper(cus);
 	return EXIT_SUCCESS;
