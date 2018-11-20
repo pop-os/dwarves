@@ -2,6 +2,7 @@ dwarves-dfsg (1.12-1) unstable; urgency=medium
 
   * New upstram release. Closes: #908563.
   * Migrate to salsa.d.o and enable CI. Closes: #908564.
+  * Migrate to DEP-14.
 
  -- Domenico Andreoli <cavok@debian.org>  Mon, 19 Nov 2018 18:11:43 +0100
 
