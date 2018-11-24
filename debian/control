@@ -14,8 +14,8 @@ Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: set of advanced DWARF utilities
  This package contains tools that use the DWARF debugging information
- inserted in ELF binaries by the compiler. This information is already
- used by debuggers (e.g. GDB), and more recent tools such as systemtap.
+ inserted in ELF binaries by the compiler. This information is used by
+ debuggers (e.g. GDB), and other tools such as systemtap.
  .
  Utilities in the dwarves suite include:
  .
