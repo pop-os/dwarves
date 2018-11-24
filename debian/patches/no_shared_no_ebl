@@ -1,3 +1,7 @@
+From: Thomas Girard <thomas.g.girard@free.fr>
+Date: Sat, 24 Nov 2018 10:43:57 +0100
+Subject: no_shared_no_ebl
+
 Description: build static libs and remove ebl dependency
  
  Build static libraries instead of shared libaries so that we have a single
@@ -9,16 +13,22 @@ Description: build static libs and remove ebl dependency
 Origin: Thomas Girard <thomas.g.girard@free.fr>
 Forwarded: no
 Last-Update: 2012-06-07
+---
+ CMakeLists.txt                | 15 +++------------
+ cmake/modules/FindDWARF.cmake | 29 +++++++++++------------------
+ 2 files changed, 14 insertions(+), 30 deletions(-)
 
---- dwarves-dfsg-1.10.orig/CMakeLists.txt
-+++ dwarves-dfsg-1.10/CMakeLists.txt
-@@ -36,19 +36,15 @@ _set_fancy(LIB_INSTALL_DIR "${EXEC_INSTA
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bd80115..c9122fc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -36,19 +36,15 @@ _set_fancy(LIB_INSTALL_DIR "${EXEC_INSTALL_PREFIX}${CMAKE_INSTALL_PREFIX}/${__LI
  set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
- 		     ctf_encoder.c ctf_loader.c libctf.c dwarf_loader.c
- 		     dutil.c elf_symtab.c rbtree.c)
+ 		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c libbtf.c
+ 		     dwarf_loader.c dutil.c elf_symtab.c rbtree.c)
 -add_library(dwarves SHARED ${dwarves_LIB_SRCS})
 -set_target_properties(dwarves PROPERTIES VERSION 1.0.0 SOVERSION 1)
--set_target_properties(dwarves PROPERTIES LINK_INTERFACE_LIBRARIES "")
+-set_target_properties(dwarves PROPERTIES INTERFACE_LINK_LIBRARIES "")
 +add_library(dwarves STATIC ${dwarves_LIB_SRCS})
  target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES})
  
@@ -47,9 +57,11 @@ Last-Update: 2012-06-07
  install(FILES man-pages/pahole.1 DESTINATION ${CMAKE_INSTALL_PREFIX}/share/man/man1/)
  install(PROGRAMS ostra/ostra-cg DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
  install(FILES ostra/python/ostra.py DESTINATION ${CMAKE_INSTALL_PREFIX}/share/dwarves/runtime/python)
---- dwarves-dfsg-1.10.orig/cmake/modules/FindDWARF.cmake
-+++ dwarves-dfsg-1.10/cmake/modules/FindDWARF.cmake
-@@ -29,22 +29,19 @@ find_path(LIBDW_INCLUDE_DIR elfutils/lib
+diff --git a/cmake/modules/FindDWARF.cmake b/cmake/modules/FindDWARF.cmake
+index f4feec4..a9e409b 100644
+--- a/cmake/modules/FindDWARF.cmake
++++ b/cmake/modules/FindDWARF.cmake
+@@ -29,22 +29,19 @@ find_path(LIBDW_INCLUDE_DIR elfutils/libdw.h
  
  find_library(DWARF_LIBRARY
  	NAMES dw dwarf
@@ -78,7 +90,7 @@ Last-Update: 2012-06-07
  
  	set(CMAKE_REQUIRED_LIBRARIES ${DWARF_LIBRARIES})
  	# check if libdw have the dwfl_module_build_id routine, i.e. if it supports the buildid
-@@ -52,10 +49,10 @@ if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_
+@@ -52,10 +49,10 @@ if (DWARF_INCLUDE_DIR AND LIBDW_INCLUDE_DIR AND DWARF_LIBRARY AND ELF_LIBRARY AN
  	# in distributions such as fedora). We do it against libelf because, IIRC, some distros
  	# include libdw linked statically into libelf.
  	check_library_exists(elf dwfl_module_build_id "" HAVE_DWFL_MODULE_BUILD_ID)
