@@ -1,5 +1,6 @@
 dwarves-dfsg (1.12-1) unstable; urgency=medium
 
+  [ Domenico Andreoli ]
   * New upstram release. Closes: #908563.
   * Migrate to salsa.d.o and enable CI. Closes: #908564.
   * Migrate to DEP-14.
@@ -7,6 +8,9 @@ dwarves-dfsg (1.12-1) unstable; urgency=medium
   * Refresh patch no_shared_no_ebl.
   * Improve package description. Closes: #914527.
   * Add test executing pahole on itself.
+
+  [ Helmut Grohne ]
+  * Let dh_auto_configure pass cross flags to cmake. Closes: #903506.
 
  -- Domenico Andreoli <cavok@debian.org>  Mon, 19 Nov 2018 18:11:43 +0100
 

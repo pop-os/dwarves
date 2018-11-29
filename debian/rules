@@ -15,8 +15,7 @@ export CFLAGS
 configure: configure-stamp
 configure-stamp:
 	dh_testdir
-	mkdir -p debian/build
-	cd debian/build && cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None" ../..
+	dh_auto_configure --builddirectory=debian/build -- -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None"
 	touch $@
 
 build: build-arch build-indep
