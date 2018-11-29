@@ -6,6 +6,7 @@ dwarves-dfsg (1.12-1) unstable; urgency=medium
   * Drop patch DW_TAG_mutable_type (merged upstream).
   * Refresh patch no_shared_no_ebl.
   * Improve package description. Closes: #914527.
+  * Add test executing pahole on itself.
 
  -- Domenico Andreoli <cavok@debian.org>  Mon, 19 Nov 2018 18:11:43 +0100
 

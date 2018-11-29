@@ -1,0 +1,2 @@
+Test-Command: pahole `which pahole`
+Depends: dwarves-dbgsym
