@@ -8,6 +8,7 @@ dwarves-dfsg (1.12-1) unstable; urgency=medium
   * Refresh patch no_shared_no_ebl.
   * Improve package description. Closes: #914527.
   * Add test executing pahole on itself.
+  * Set debhelper compatibility level to 10.
 
   [ Helmut Grohne ]
   * Let dh_auto_configure pass cross flags to cmake. Closes: #903506.
