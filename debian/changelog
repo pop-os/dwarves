@@ -9,6 +9,7 @@ dwarves-dfsg (1.12-1) unstable; urgency=medium
   * Improve package description. Closes: #914527.
   * Add test executing pahole on itself.
   * Set debhelper compatibility level to 10.
+  * Start using dh_strip_nondeterminism.
 
   [ Helmut Grohne ]
   * Let dh_auto_configure pass cross flags to cmake. Closes: #903506.
