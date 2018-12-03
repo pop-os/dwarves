@@ -1,7 +1,7 @@
 dwarves-dfsg (1.12-1) unstable; urgency=medium
 
   [ Domenico Andreoli ]
-  * New upstram release. Closes: #908563.
+  * New upstram release. Closes: #908563, #779809, #693096,
   * Migrate to salsa.d.o and enable CI. Closes: #908564.
   * Migrate to DEP-14.
   * Drop patch DW_TAG_mutable_type (merged upstream).
