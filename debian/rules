@@ -3,74 +3,19 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-CFLAGS = -Wall -g
-ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
-	CFLAGS += -O0
-else
-	CFLAGS += -O2
-endif
+%:
+	dh $@ --builddirectory=debian/build
 
-export CFLAGS
+override_dh_auto_configure:
+	dh_auto_configure -- -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None"
 
-configure: configure-stamp
-configure-stamp:
-	dh_testdir
-	dh_auto_configure --builddirectory=debian/build -- -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None"
-	touch $@
-
-build: build-arch build-indep
-build-arch: build-stamp
-build-indep: build-stamp
-build-stamp: configure-stamp
-	dh_testdir
-	$(MAKE) VERBOSE=1 -C debian/build
-	touch $@
-
-clean:
-	dh_testdir
-	dh_testroot
-	rm -f build-stamp configure-stamp
-	[ ! -f debian/build/Makefile ] || $(MAKE) -C debian/build clean
-	rm -rf debian/build config.h
-	dh_clean
-
-install: build
-	dh_testdir
-	dh_testroot
-	dh_prep
-	dh_installdirs
-
+override_dh_auto_install-arch:
 	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/tmp
 	# remove them for now, will be included in a next upload
 	# (requires python and matplotlib)
 	rm -Rf debian/tmp/usr/share/dwarves/runtime/python debian/tmp/usr/bin/ostra-cg
 
-# Build architecture-independent files here.
-binary-indep: build install
-# We have nothing to do by default.
-
-# Build architecture-dependent files here.
-binary-arch: build install
-	dh_testdir
-	dh_testroot
-	dh_installchangelogs
-	dh_installdocs
-	dh_installexamples
-	dh_install --source=debian/tmp --fail-missing
-	dh_installman
-	dh_link
-	dh_strip
-	dh_compress
-	dh_strip_nondeterminism
-	dh_fixperms
-	dh_installdeb
-	dh_shlibdeps
-	dh_gencontrol
-	dh_md5sums
-	dh_builddeb
-
 get-orig-source:
 	sh debian/get-orig.sh
 
-binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary install configure get-orig-source
+.PHONY: get-orig-source
