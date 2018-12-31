@@ -1,6 +1,7 @@
 dwarves-dfsg (1.12-2) UNRELEASED; urgency=medium
 
   * Convert to dh.
+  * Fix Homepage and Vcs-Git.
   * Fix depends on debhelper >= 10.
   * Remove trailing spaces from the Debian changelog.
 
