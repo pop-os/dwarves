@@ -1,2 +1,2 @@
-Test-Command: pahole `which pahole`
-Depends: dwarves-dbgsym
+Test-Command: pahole /sbin/ldconfig
+Depends: dwarves, libc-bin-dbgsym

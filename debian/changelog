@@ -1,3 +1,9 @@
+dwarves-dfsg (1.12-3) UNRELEASED; urgency=medium
+
+  * Autopkgtest on libc-bin-dbgsym instead of dwarves-dbgsym. Closes: #923717.
+
+ -- Domenico Andreoli <cavok@debian.org>  Mon, 11 Mar 2019 17:52:34 +0100
+
 dwarves-dfsg (1.12-2) unstable; urgency=medium
 
   * Convert to dh.
