@@ -1,7 +1,8 @@
 config.h.cmake
-btf.h
+btfdiff
 btf_encoder.c
 btf_encoder.h
+btf_loader.c
 ctf_encoder.c
 ctf_encoder.h
 ctf_loader.c
@@ -22,6 +23,7 @@ elfcreator.c
 elfcreator.h
 elf_symtab.c
 elf_symtab.h
+fullcircle
 gobuffer.c
 gobuffer.h
 hash.h
@@ -43,6 +45,7 @@ strings.c
 strings.h
 dutil.c
 dutil.h
+COPYING
 NEWS
 README
 README.btf
@@ -58,3 +61,4 @@ ctf.h
 libctf.c
 libctf.h
 regtest
+lib/bpf/

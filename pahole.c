@@ -1,11 +1,9 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
   Copyright (C) 2007-2008 Arnaldo Carvalho de Melo <acme@redhat.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <argp.h>
@@ -64,7 +62,9 @@ static struct conf_fprintf conf = {
 	.emit_stats = 1,
 };
 
-static struct conf_load conf_load;
+static struct conf_load conf_load = {
+	.conf_fprintf = &conf,
+};
 
 struct structure {
 	struct list_head  node;
@@ -158,7 +158,7 @@ static void nr_definitions_formatter(struct structure *st)
 }
 
 static void nr_members_formatter(struct class *class,
-				 struct cu *cu, uint16_t id __unused)
+				 struct cu *cu, uint32_t id __unused)
 {
 	printf("%s%c%u\n", class__name(class, cu), separator,
 	       class__nr_members(class));
@@ -170,26 +170,26 @@ static void nr_methods_formatter(struct structure *st)
 }
 
 static void size_formatter(struct class *class,
-			   struct cu *cu, uint16_t id __unused)
+			   struct cu *cu, uint32_t id __unused)
 {
 	printf("%s%c%d%c%u\n", class__name(class, cu), separator,
 	       class__size(class), separator, class->nr_holes);
 }
 
 static void class_name_len_formatter(struct class *class, struct cu *cu,
-				     uint16_t id __unused)
+				     uint32_t id __unused)
 {
 	const char *name = class__name(class, cu);
 	printf("%s%c%zd\n", name, separator, strlen(name));
 }
 
 static void class_name_formatter(struct class *class,
-				 struct cu *cu, uint16_t id __unused)
+				 struct cu *cu, uint32_t id __unused)
 {
 	puts(class__name(class, cu));
 }
 
-static void class_formatter(struct class *class, struct cu *cu, uint16_t id)
+static void class_formatter(struct class *class, struct cu *cu, uint32_t id)
 {
 	struct tag *typedef_alias = NULL;
 	struct tag *tag = class__tag(class);
@@ -226,7 +226,7 @@ static void class_formatter(struct class *class, struct cu *cu, uint16_t id)
 	putchar('\n');
 }
 
-static void print_packable_info(struct class *c, struct cu *cu, uint16_t id)
+static void print_packable_info(struct class *c, struct cu *cu, uint32_t id)
 {
 	const struct tag *t = class__tag(c);
 	const size_t orig_size = class__size(c);
@@ -269,17 +269,17 @@ static void print_stats(void)
 }
 
 static struct class *class__filter(struct class *class, struct cu *cu,
-				   uint16_t tag_id);
+				   uint32_t tag_id);
 
 static void (*formatter)(struct class *class,
-			 struct cu *cu, uint16_t id) = class_formatter;
+			 struct cu *cu, uint32_t id) = class_formatter;
 
 static void print_classes(struct cu *cu)
 {
-	uint16_t id;
+	uint32_t id;
 	struct class *pos;
 
-	cu__for_each_struct(cu, id, pos) {
+	cu__for_each_struct_or_union(cu, id, pos) {
 		bool existing_entry;
 		struct structure *str;
 
@@ -354,7 +354,7 @@ static int class__packable(struct class *class, struct cu *cu)
 }
 
 static struct class *class__filter(struct class *class, struct cu *cu,
-				   uint16_t tag_id)
+				   uint32_t tag_id)
 {
 	struct tag *tag = class__tag(class);
 	const char *name;
@@ -409,6 +409,13 @@ static struct class *class__filter(struct class *class, struct cu *cu,
 	     strncmp(decl_exclude_prefix, tag__decl_file(tag, cu),
 		     decl_exclude_prefix_len) == 0))
 		return NULL;
+	/*
+	 * The following only make sense for structs, i.e. 'struct class',
+	 * and as we can get here with a union, that is represented by a 'struct type',
+	 * bail out if we get here with an union
+	 */
+	if (!tag__is_struct(class__tag(class)))
+		return show_packable ? NULL : class;
 
 	if (tag->top_level)
 		class__find_holes(class);
@@ -603,7 +610,7 @@ static void cu_fixup_word_size_iterator(struct cu *cu)
 	original_word_size = cu->addr_size;
 	cu->addr_size = word_size;
 
-	uint16_t id;
+	uint32_t id;
 	struct tag *pos;
 	cu__for_each_type(cu, id, pos)
 		tag__fixup_word_size(pos, cu);
@@ -620,7 +627,7 @@ static void cu__account_nr_methods(struct cu *cu)
 		list_for_each_entry(pos, &pos_function->proto.parms, tag.node) {
 			struct tag *type = cu__type(cu, pos->tag.type);
 
-			if (type == NULL || type->tag != DW_TAG_pointer_type)
+			if (type == NULL || !tag__is_pointer(type))
 				continue;
 
 			type = cu__type(cu, type->type);
@@ -654,11 +661,11 @@ static void cu__account_nr_methods(struct cu *cu)
 
 static char tab[128];
 
-static void print_structs_with_pointer_to(const struct cu *cu, uint16_t type)
+static void print_structs_with_pointer_to(const struct cu *cu, uint32_t type)
 {
 	struct class *pos;
 	struct class_member *pos_member;
-	uint16_t id;
+	uint32_t id;
 
 	cu__for_each_struct(cu, id, pos) {
 		bool looked = false;
@@ -671,7 +678,7 @@ static void print_structs_with_pointer_to(const struct cu *cu, uint16_t type)
 			struct tag *ctype = cu__type(cu, pos_member->tag.type);
 
 			tag__assert_search_result(ctype);
-			if (ctype->tag != DW_TAG_pointer_type || ctype->type != type)
+			if (!tag__is_pointer_to(ctype, type))
 				continue;
 
 			if (!looked) {
@@ -697,10 +704,10 @@ static void print_structs_with_pointer_to(const struct cu *cu, uint16_t type)
 	}
 }
 
-static void print_containers(const struct cu *cu, uint16_t type, int ident)
+static void print_containers(const struct cu *cu, uint32_t type, int ident)
 {
 	struct class *pos;
-	uint16_t id;
+	uint32_t id;
 
 	cu__for_each_struct(cu, id, pos) {
 		if (pos->type.namespace.name == 0)
@@ -744,6 +751,9 @@ ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 #define ARGP_first_obj_only	   303
 #define ARGP_classes_as_structs	   304
 #define ARGP_hex_fmt		   305
+#define ARGP_suppress_aligned_attribute	306
+#define ARGP_suppress_force_paddings	307
+#define ARGP_suppress_packed	   308
 
 static const struct argp_option pahole__options[] = {
 	{
@@ -942,6 +952,21 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "Flat arrays",
 	},
 	{
+		.name = "suppress_aligned_attribute",
+		.key  = ARGP_suppress_aligned_attribute,
+		.doc  = "Suppress __attribute__((aligned(N))",
+	},
+	{
+		.name = "suppress_force_paddings",
+		.key  = ARGP_suppress_force_paddings,
+		.doc  = "Suppress int :N paddings at the end",
+	},
+	{
+		.name = "suppress_packed",
+		.key  = ARGP_suppress_packed,
+		.doc  = "Suppress output of inferred __attribute__((__packed__))",
+	},
+	{
 		.name = "show_private_classes",
 		.key  = ARGP_show_private_classes,
 		.doc  = "Show classes that are defined inside other classes or in functions",
@@ -1002,7 +1027,8 @@ static error_t pahole__options_parser(int key, char *arg,
 		  conf_load.extra_dbg_info = 1;		break;
 	case 'i': find_containers = 1;
 		  class_name = arg;			break;
-	case 'J': btf_encode = 1;			break;
+	case 'J': btf_encode = 1;
+		  no_bitfield_type_recode = true;	break;
 	case 'l': conf.show_first_biggest_size_base_type_member = 1;	break;
 	case 'M': conf.show_only_data_members = 1;	break;
 	case 'm': stats_formatter = nr_methods_formatter; break;
@@ -1040,6 +1066,12 @@ static error_t pahole__options_parser(int key, char *arg,
 		break;
 	case 'Z': ctf_encode = 1;			break;
 	case ARGP_flat_arrays: conf.flat_arrays = 1;	break;
+	case ARGP_suppress_aligned_attribute:
+		conf.suppress_aligned_attribute = 1;	break;
+	case ARGP_suppress_force_paddings:
+		conf.suppress_force_paddings = 1;	break;
+	case ARGP_suppress_packed:
+		conf.suppress_packed = 1;		break;
 	case ARGP_show_private_classes:
 		show_private_classes = true;
 		conf.show_only_data_members = 1;	break;
@@ -1115,7 +1147,7 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 
 	if (btf_encode) {
 		cu__encode_btf(cu, global_verbose);
-		goto dump_and_stop;
+		return LSK__KEEPIT;
 	}
 
 	if (ctf_encode) {
@@ -1150,12 +1182,10 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		pos = rb_entry(next, struct str_node, rb_node);
 		next = rb_next(&pos->rb_node);
 
-		static uint16_t class_id;
+		static type_id_t class_id;
 		bool include_decls = find_pointers_in_structs != 0 ||
 				     stats_formatter == nr_methods_formatter;
-		struct tag *class = cu__find_struct_by_name(cu, pos->s,
-							    include_decls,
-							    &class_id);
+		struct tag *class = cu__find_struct_or_union_by_name(cu, pos->s, include_decls, &class_id);
 		if (class == NULL)
 			continue;
 
@@ -1170,9 +1200,10 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		strlist__remove(class_names, pos);
 
 		class__find_holes(tag__class(class));
-		if (reorganize)
-			do_reorg(class, cu);
-		else if (find_containers)
+		if (reorganize) {
+			if (tag__is_struct(class))
+				do_reorg(class, cu);
+		} else if (find_containers)
 			print_containers(cu, class_id, 0);
 		else if (find_pointers_in_structs)
 			print_structs_with_pointer_to(cu, class_id);
@@ -1264,6 +1295,14 @@ int main(int argc, char *argv[])
 	if (err != 0) {
 		cus__fprintf_load_files_err(cus, "pahole", argv + remaining, err, stderr);
 		goto out_cus_delete;
+	}
+
+	if (btf_encode) {
+		err = btf_encoder__encode();
+		if (err) {
+			fputs("Failed to encode BTF\n", stderr);
+			goto out_cus_delete;
+		}
 	}
 
 	if (stats_formatter != NULL)

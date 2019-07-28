@@ -1,10 +1,8 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <argp.h>
@@ -23,6 +21,7 @@
 static int show_struct_diffs;
 static int show_function_diffs;
 static int verbose;
+static int quiet;
 static int show_terse_type_changes;
 
 static struct conf_load conf_load = {
@@ -183,21 +182,42 @@ static int check_print_change(const struct class_member *old,
 	return changes;
 }
 
+static struct class_member *class__find_pair_member(const struct class *structure, const struct cu *cu,
+						    const struct class_member *pair_member, const struct cu *pair_cu,
+						    int *nr_anonymousp)
+{
+	const char *member_name = class_member__name(pair_member, pair_cu);
+	struct class_member *member;
+
+	if (member_name)
+		return class__find_member_by_name(structure, cu, member_name);
+
+	int nr_anonymous = ++*nr_anonymousp;
+
+	/* Unnamed struct or union, lets look for the first unammed matchin tag.type */
+
+	type__for_each_member(&structure->type, member) {
+		if (member->tag.tag == pair_member->tag.tag && /* Both are class/union/struct (unnamed) */
+		    class_member__name(member, cu) == member_name && /* Both are NULL? */
+		    --nr_anonymous == 0)
+			return member;
+	}
+
+	return NULL;
+}
+
 static int check_print_members_changes(const struct class *structure,
 				       const struct cu *cu,
 				       const struct class *new_structure,
 				       const struct cu *new_cu,
 				       int print)
 {
-	int changes = 0;
+	int changes = 0, nr_anonymous = 0;
 	struct class_member *member;
 	uint16_t nr_twins_found = 0;
 
 	type__for_each_member(&structure->type, member) {
-		const char *member_name = class_member__name(member, cu);
-		struct class_member *twin =
-			class__find_member_by_name(new_structure, new_cu,
-						   member_name);
+		struct class_member *twin = class__find_pair_member(new_structure, new_cu, member, cu, &nr_anonymous);
 		if (twin != NULL) {
 			twin->tag.visited = 1;
 			++nr_twins_found;
@@ -285,9 +305,17 @@ static void diff_struct(const struct cu *new_cu, struct class *structure,
 					 new_cu, diff);
 }
 
+static struct cu *cus__find_pair(struct cus *cus, const char *name)
+{
+	if (cus->nr_entries == 1)
+		return list_first_entry(&cus->cus, struct cu, node);
+
+	return cus__find_cu_by_name(cus, name);
+}
+
 static int cu_find_new_tags_iterator(struct cu *new_cu, void *old_cus)
 {
-	struct cu *old_cu = cus__find_cu_by_name(old_cus, new_cu->name);
+	struct cu *old_cu = cus__find_pair(old_cus, new_cu->name);
 
 	if (old_cu != NULL && cu__same_build_id(old_cu, new_cu))
 		return 0;
@@ -334,7 +362,7 @@ static int cu_find_new_tags_iterator(struct cu *new_cu, void *old_cus)
 
 static int cu_diff_iterator(struct cu *cu, void *new_cus)
 {
-	struct cu *new_cu = cus__find_cu_by_name(new_cus, cu->name);
+	struct cu *new_cu = cus__find_pair(new_cus, cu->name);
 
 	if (new_cu != NULL && cu__same_build_id(cu, new_cu))
 		return 0;
@@ -428,21 +456,19 @@ static void show_nr_members_changes(const struct class *structure,
 				    const struct cu *new_cu)
 {
 	struct class_member *member;
+	int nr_anonymous = 0;
 
 	/* Find the removed ones */
 	type__for_each_member(&structure->type, member) {
-		struct class_member *twin =
-			class__find_member_by_name(new_structure, new_cu,
-						   class_member__name(member, cu));
+		struct class_member *twin = class__find_pair_member(new_structure, new_cu, member, cu, &nr_anonymous);
 		if (twin == NULL)
 			show_changed_member('-', member, cu);
 	}
 
+	nr_anonymous = 0;
 	/* Find the new ones */
 	type__for_each_member(&new_structure->type, member) {
-		struct class_member *twin =
-			class__find_member_by_name(structure, cu,
-						   class_member__name(member, new_cu));
+		struct class_member *twin = class__find_pair_member(structure, cu, member, new_cu, &nr_anonymous);
 		if (twin == NULL)
 			show_changed_member('+', member, new_cu);
 	}
@@ -591,14 +617,17 @@ static int cu_show_diffs_iterator(struct cu *cu, void *cookie)
 	    cu->nr_structures_changed == 0)
 		return 0;
 
-	if (first_cu_printed)
-		putchar('\n');
-	else
+	if (first_cu_printed) {
+		if (!quiet)
+			putchar('\n');
+	} else {
 		first_cu_printed = 1;
+	}
 
 	++total_cus_changed;
 
-	printf("%s:\n", cu->name);
+	if (!quiet)
+		printf("%s:\n", cu->name);
 
 	uint32_t id;
 	struct class *class;
@@ -708,6 +737,11 @@ static const struct argp_option codiff__options[] = {
 		.doc  = "show diffs details",
 	},
 	{
+		.key  = 'q',
+		.name = "quiet",
+		.doc  = "Show only differences, no difference? No output",
+	},
+	{
 		.name = NULL,
 	}
 };
@@ -721,6 +755,7 @@ static error_t codiff__options_parser(int key, char *arg __unused,
 	case 's': show_struct_diffs = 1;	break;
 	case 't': show_terse_type_changes = 1;	break;
 	case 'V': verbose = 1;			break;
+	case 'q': quiet = 1;			break;
 	default:  return ARGP_ERR_UNKNOWN;
 	}
 	return 0;
@@ -805,7 +840,8 @@ failure:
 	cus__for_each_cu(old_cus, cu_diff_iterator, new_cus, NULL);
 	cus__for_each_cu(new_cus, cu_find_new_tags_iterator, old_cus, NULL);
 	cus__for_each_cu(old_cus, cu_show_diffs_iterator, NULL, NULL);
-	cus__for_each_cu(new_cus, cu_show_diffs_iterator, (void *)1, NULL);
+	if (new_cus->nr_entries > 1)
+		cus__for_each_cu(new_cus, cu_show_diffs_iterator, (void *)1, NULL);
 
 	if (total_cus_changed > 1) {
 		if (show_function_diffs)

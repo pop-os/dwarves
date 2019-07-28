@@ -1,9 +1,7 @@
 /*
-  Copyright (C) 2007-2016 Arnaldo Carvalho de Melo <acme@kernel.org>
+  SPDX-License-Identifier: GPL-2.0-only
 
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
+  Copyright (C) 2007-2016 Arnaldo Carvalho de Melo <acme@kernel.org>
 */
 
 #include <argp.h>
@@ -22,6 +20,9 @@ static void emit_tag(struct tag *tag, uint32_t tag_id, struct cu *cu)
 {
 	printf("/* %d */\n", tag_id);
 
+	if (tag__is_struct(tag))
+		class__find_holes(tag__class(tag));
+
 	if (tag->tag == DW_TAG_base_type) {
 		char bf[64];
 		const char *name = base_type__name(tag__base_type(tag), cu,
@@ -31,7 +32,7 @@ static void emit_tag(struct tag *tag, uint32_t tag_id, struct cu *cu)
 			printf("anonymous base_type\n");
 		else
 			puts(name);
-	} else if (tag->tag == DW_TAG_pointer_type)
+	} else if (tag__is_pointer(tag))
 		printf(" /* pointer to %lld */\n", (unsigned long long)tag->type);
 	else
 		tag__fprintf(tag, cu, &conf, stdout);
@@ -80,6 +81,7 @@ static enum load_steal_kind pdwtags_stealer(struct cu *cu,
 
 static struct conf_load pdwtags_conf_load = {
 	.steal = pdwtags_stealer,
+	.conf_fprintf = &conf,
 };
 
 /* Name and version of program.  */

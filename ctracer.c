@@ -1,10 +1,8 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <argp.h>
@@ -194,7 +192,7 @@ static void method__add(struct cu *cu, struct function *function, uint32_t id)
  * a pointer to the specified "class" (a struct, unions can be added later).
  */
 static struct function *function__filter(struct function *function,
-					 struct cu *cu, uint16_t target_type_id)
+					 struct cu *cu, type_id_t target_type_id)
 {
 	if (function__inlined(function) ||
 	    function->abstract_origin != 0 ||
@@ -214,7 +212,7 @@ static struct function *function__filter(struct function *function,
  */
 static int cu_find_methods_iterator(struct cu *cu, void *cookie)
 {
-	uint16_t target_type_id;
+	type_id_t target_type_id;
 	uint32_t function_id;
 	struct function *function;
 	struct tag *target = cu__find_struct_by_name(cu, cookie, 0,
@@ -501,7 +499,7 @@ static int class__emit_ostra_converter(struct tag *tag,
  * to the target class.
  */
 static struct tag *pointer_filter(struct tag *tag, struct cu *cu,
-				  uint16_t target_type_id)
+				  type_id_t target_type_id)
 {
 	struct type *type;
 	struct class_member *pos;
@@ -522,8 +520,7 @@ static struct tag *pointer_filter(struct tag *tag, struct cu *cu,
 		struct tag *ctype = cu__type(cu, pos->tag.type);
 
 		tag__assert_search_result(ctype);
-		if (ctype->tag == DW_TAG_pointer_type &&
-		    ctype->type == target_type_id)
+		if (tag__is_pointer_to(ctype, target_type_id))
 			return tag;
 	}
 
@@ -536,7 +533,7 @@ static struct tag *pointer_filter(struct tag *tag, struct cu *cu,
  */
 static int cu_find_pointers_iterator(struct cu *cu, void *class_name)
 {
-	uint16_t target_type_id, id;
+	type_id_t target_type_id, id;
 	struct tag *target = cu__find_struct_by_name(cu, class_name, 0,
 						     &target_type_id), *pos;
 
@@ -560,7 +557,7 @@ static void class__find_pointers(const char *class_name)
  * a struct of type target.
  */
 static struct tag *alias_filter(struct tag *tag, const struct cu *cu,
-				uint16_t target_type_id)
+				type_id_t target_type_id)
 {
 	struct type *type;
 	struct class_member *first_member;
@@ -591,7 +588,7 @@ static void class__find_aliases(const char *class_name);
  */
 static int cu_find_aliases_iterator(struct cu *cu, void *class_name)
 {
-	uint16_t target_type_id, id;
+	type_id_t target_type_id, id;
 	struct tag *target = cu__find_struct_by_name(cu, class_name, 0,
 						     &target_type_id), *pos;
 	if (target == NULL)
@@ -692,7 +689,7 @@ out:
  */
 static int function__emit_probes(struct function *func, uint32_t function_id,
 				 const struct cu *cu,
-				 const uint16_t target_type_id, int probe_type,
+				 const type_id_t target_type_id, int probe_type,
 				 const char *member)
 {
 	struct parameter *pos;
@@ -714,8 +711,7 @@ static int function__emit_probes(struct function *func, uint32_t function_id,
 		struct tag *type = cu__type(cu, pos->tag.type);
 
 		tag__assert_search_result(type);
-		if (type->tag != DW_TAG_pointer_type ||
-		    type->type != target_type_id)
+		if (!tag__is_pointer_to(type, target_type_id))
 			continue;
 
 		if (member != NULL)
@@ -744,7 +740,7 @@ static int function__emit_probes(struct function *func, uint32_t function_id,
  */
 static int cu_emit_probes_iterator(struct cu *cu, void *cookie)
 {
-	uint16_t target_type_id;
+	type_id_t target_type_id;
 	struct tag *target = cu__find_struct_by_name(cu, cookie, 0, &target_type_id);
 	struct function *pos;
 
@@ -770,7 +766,7 @@ static int cu_emit_probes_iterator(struct cu *cu, void *cookie)
  */
 static int cu_emit_pointer_probes_iterator(struct cu *cu, void *cookie)
 {
-	uint16_t target_type_id, pointer_id;
+	type_id_t target_type_id, pointer_id;
 	struct tag *target, *pointer;
 	struct function *pos_tag;
 	struct class_member *pos_member;
@@ -791,7 +787,7 @@ static int cu_emit_pointer_probes_iterator(struct cu *cu, void *cookie)
 		struct tag *ctype = cu__type(cu, pos_member->tag.type);
 
 		tag__assert_search_result(ctype);
-		if (ctype->tag == DW_TAG_pointer_type && ctype->type == target_type_id)
+		if (tag__is_pointer_to(ctype, target_type_id))
 			break;
 	}
 

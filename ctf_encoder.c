@@ -1,10 +1,8 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2009 Red Hat Inc.
   Copyright (C) 2009 Arnaldo Carvalho de Melo <acme@redhat.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include "dwarves.h"
@@ -15,7 +13,7 @@
 #include <inttypes.h>
 
 static int tag__check_id_drift(const struct tag *tag,
-			       uint16_t core_id, uint16_t ctf_id)
+			       uint32_t core_id, uint32_t ctf_id)
 {
 	if (ctf_id != core_id) {
 		fprintf(stderr, "%s: %s id drift, core: %u, libctf: %d\n",
@@ -39,61 +37,56 @@ static int dwarf_to_ctf_type(uint16_t tag)
 	return 0xffff;
 }
 
-static int base_type__encode(struct tag *tag, uint16_t core_id,
-			     struct ctf *ctf)
+static int base_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	struct base_type *bt = tag__base_type(tag);
-	int ctf_id = ctf__add_base_type(ctf, bt->name, bt->bit_size);
+	uint32_t ctf_id = ctf__add_base_type(ctf, bt->name, bt->bit_size);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	return 0;
 }
 
-static int pointer_type__encode(struct tag *tag, uint16_t core_id,
-				struct ctf *ctf)
+static int pointer_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
-	int ctf_id = ctf__add_short_type(ctf, dwarf_to_ctf_type(tag->tag),
-					 tag->type, 0);
+	uint32_t ctf_id = ctf__add_short_type(ctf, dwarf_to_ctf_type(tag->tag), tag->type, 0);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	return 0;
 }
 
-static int typedef__encode(struct tag *tag, uint16_t core_id, struct ctf *ctf)
+static int typedef__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
-	int ctf_id = ctf__add_short_type(ctf, CTF_TYPE_KIND_TYPDEF, tag->type,
-					 tag__namespace(tag)->name);
+	uint32_t ctf_id = ctf__add_short_type(ctf, CTF_TYPE_KIND_TYPDEF, tag->type, tag__namespace(tag)->name);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	return 0;
 }
 
-static int fwd_decl__encode(struct tag *tag, uint16_t core_id, struct ctf *ctf)
+static int fwd_decl__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
-	int ctf_id = ctf__add_fwd_decl(ctf, tag__namespace(tag)->name);
+	uint32_t ctf_id = ctf__add_fwd_decl(ctf, tag__namespace(tag)->name);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	return 0;
 }
 
-static int structure_type__encode(struct tag *tag, uint16_t core_id,
-				  struct ctf *ctf)
+static int structure_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	struct type *type = tag__type(tag);
 	int64_t position;
-	int ctf_id = ctf__add_struct(ctf, dwarf_to_ctf_type(tag->tag),
+	uint32_t ctf_id = ctf__add_struct(ctf, dwarf_to_ctf_type(tag->tag),
 				     type->namespace.name, type->size,
 				     type->nr_members, &position);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	const bool is_short = type->size < CTF_SHORT_MEMBER_LIMIT;
@@ -122,28 +115,25 @@ static uint32_t array_type__nelems(struct tag *tag)
 	return nelem;
 }
 
-static int array_type__encode(struct tag *tag, uint16_t core_id,
-			      struct ctf *ctf)
+static int array_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	const uint32_t nelems = array_type__nelems(tag);
-	int ctf_id = ctf__add_array(ctf, tag->type, 0, nelems);
+	uint32_t ctf_id = ctf__add_array(ctf, tag->type, 0, nelems);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	return 0;
 }
 
-static int subroutine_type__encode(struct tag *tag, uint16_t core_id,
-				   struct ctf *ctf)
+static int subroutine_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	struct parameter *pos;
 	int64_t position;
 	struct ftype *ftype = tag__ftype(tag);
-	int ctf_id = ctf__add_function_type(ctf, tag->type, ftype->nr_parms,
-					    ftype->unspec_parms, &position);
+	uint32_t ctf_id = ctf__add_function_type(ctf, tag->type, ftype->nr_parms, ftype->unspec_parms, &position);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	ftype__for_each_parameter(ftype, pos)
@@ -152,16 +142,15 @@ static int subroutine_type__encode(struct tag *tag, uint16_t core_id,
 	return 0;
 }
 
-static int enumeration_type__encode(struct tag *tag, uint16_t core_id,
-				    struct ctf *ctf)
+static int enumeration_type__encode(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	struct type *etype = tag__type(tag);
 	int64_t position;
-	int ctf_id = ctf__add_enumeration_type(ctf, etype->namespace.name,
+	uint32_t ctf_id = ctf__add_enumeration_type(ctf, etype->namespace.name,
 					       etype->size, etype->nr_members,
 					       &position);
 
-	if (ctf_id < 0 || tag__check_id_drift(tag, core_id, ctf_id))
+	if (tag__check_id_drift(tag, core_id, ctf_id))
 		return -1;
 
 	struct enumerator *pos;
@@ -171,7 +160,7 @@ static int enumeration_type__encode(struct tag *tag, uint16_t core_id,
 	return 0;
 }
 
-static void tag__encode_ctf(struct tag *tag, uint16_t core_id, struct ctf *ctf)
+static void tag__encode_ctf(struct tag *tag, uint32_t core_id, struct ctf *ctf)
 {
 	switch (tag->tag) {
 	case DW_TAG_base_type:
@@ -319,7 +308,7 @@ int cu__encode_ctf(struct cu *cu, int verbose)
 	struct variable *var;
 	cu__for_each_variable(cu, id, pos) {
 		var = tag__variable(pos);
-		if (var->location != LOCATION_GLOBAL)
+		if (variable__scope(var) != VSCOPE_GLOBAL)
 			continue;
 		struct hlist_head *head = &hash_addr[hashaddr__fn(var->ip.addr)];
 		hlist_add_head(&var->tool_hnode, head);

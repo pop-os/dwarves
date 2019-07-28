@@ -1,11 +1,9 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2007-2016 Arnaldo Carvalho de Melo <acme@kernel.org>
 
   System call sign extender
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <argp.h>
@@ -64,7 +62,7 @@ static void emit_wrapper(struct function *f, struct cu *cu)
 	int regparm = 0, needs_wrapper = 0;
 
 	function__for_each_parameter(f, parm) {
-		const uint16_t type_id = parm->tag.type;
+		const type_id_t type_id = parm->tag.type;
 		struct tag *type = cu__type(cu, type_id);
 
 		tag__assert_search_result(type);

@@ -1,12 +1,10 @@
 #ifndef _DWARVES_H_
 #define _DWARVES_H_ 1
 /*
-  Copyright (C) 2006 Mandriva Conectiva S.A.
-  Copyright (C) 2006..2009 Arnaldo Carvalho de Melo <acme@redhat.com>
+  SPDX-License-Identifier: GPL-2.0-only
 
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
+  Copyright (C) 2006 Mandriva Conectiva S.A.
+  Copyright (C) 2006..2019 Arnaldo Carvalho de Melo <acme@redhat.com>
 */
 
 
@@ -29,6 +27,14 @@ enum load_steal_kind {
 	LSK__STOP_LOADING,
 };
 
+/*
+ * BTF combines all the types into one big CU using btf_dedup(), so for something
+ * like a allyesconfig vmlinux kernel we can get over 65535 types.
+ */
+typedef uint32_t type_id_t;
+
+struct conf_fprintf;
+
 /** struct conf_load - load configuration
  * @extra_dbg_info - keep original debugging format extra info
  *		     (e.g. DWARF's decl_{line,file}, id, etc)
@@ -43,6 +49,7 @@ struct conf_load {
 	bool			extra_dbg_info;
 	bool			fixup_silly_bitfields;
 	bool			get_addr_info;
+	struct conf_fprintf	*conf_fprintf;
 };
 
 /** struct conf_fprintf - hints to the __fprintf routines
@@ -51,6 +58,9 @@ struct conf_load {
  * @classes_as_structs - class f becomes struct f, CTF doesn't have a "class"
  * @cachelinep - pointer to current cacheline, so that when expanding types we keep track of it,
  * 		 needs to be "global", i.e. not set at each recursion.
+ * @suppress_force_paddings: This makes sense only if the debugging format has struct alignment information,
+ *                           So allow for it to be disabled and disable it automatically for things like BTF,
+ *                           that don't have such info.
  */
 struct conf_fprintf {
 	const char *prefix;
@@ -65,18 +75,27 @@ struct conf_fprintf {
 	uint8_t    rel_offset:1;
 	uint8_t	   emit_stats:1;
 	uint8_t	   suppress_comments:1;
+	uint8_t	   has_alignment_info:1;
+	uint8_t	   suppress_aligned_attribute:1;
 	uint8_t	   suppress_offset_comment:1;
+	uint8_t	   suppress_force_paddings:1;
+	uint8_t	   suppress_packed:1;
 	uint8_t	   show_decl_info:1;
 	uint8_t	   show_only_data_members:1;
 	uint8_t	   no_semicolon:1;
 	uint8_t	   show_first_biggest_size_base_type_member:1;
 	uint8_t	   flat_arrays:1;
+	uint8_t	   first_member:1;
+	uint8_t	   last_member:1;
+	uint8_t	   union_member:1;
 	uint8_t	   no_parm_names:1;
 	uint8_t	   classes_as_structs:1;
 	uint8_t	   hex_fmt:1;
+	uint8_t	   strip_inline:1;
 };
 
 struct cus {
+	uint32_t	      nr_entries;
 	struct list_head      cus;
 };
 
@@ -98,7 +117,9 @@ void cus__print_error_msg(const char *progname, const struct cus *cus,
 struct cu *cus__find_cu_by_name(const struct cus *cus, const char *name);
 struct tag *cus__find_struct_by_name(const struct cus *cus, struct cu **cu,
 				     const char *name, const int include_decls,
-				     uint16_t *id);
+				     type_id_t *id);
+struct tag *cus__find_struct_or_union_by_name(const struct cus *cus, struct cu **cu,
+					      const char *name, const int include_decls, type_id_t *id);
 struct function *cus__find_function_at_addr(const struct cus *cus,
 					    uint64_t addr, struct cu **cu);
 void cus__for_each_cu(struct cus *cus, int (*iterator)(struct cu *cu, void *cookie),
@@ -172,6 +193,7 @@ struct debug_fmt_ops {
 					      const struct cu *cu);
 	const char	   *(*strings__ptr)(const struct cu *cu, strings_t s);
 	void		   (*cu__delete)(struct cu *cu);
+	bool		   has_alignment_info;
 };
 
 struct cu {
@@ -194,6 +216,7 @@ struct cu {
 	uint8_t		 extra_dbg_info:1;
 	uint8_t		 has_addr_info:1;
 	uint8_t		 uses_global_strings:1;
+	uint8_t		 little_endian:1;
 	uint16_t	 language;
 	unsigned long	 nr_inline_expansions;
 	size_t		 size_inline_expansions;
@@ -242,7 +265,7 @@ static inline __pure bool cu__is_c_plus_plus(const struct cu *cu)
 /**
  * cu__for_each_type - iterate thru all the type tags
  * @cu: struct cu instance to iterate
- * @id: uint16_t tag id
+ * @id: type_id_t id
  * @pos: struct tag iterator
  *
  * See cu__table_nullify_type_entry and users for the reason for
@@ -258,12 +281,26 @@ static inline __pure bool cu__is_c_plus_plus(const struct cu *cu)
  * cu__for_each_struct - iterate thru all the struct tags
  * @cu: struct cu instance to iterate
  * @pos: struct class iterator
- * @id: uint16_t tag id
+ * @id: type_id_t id
  */
 #define cu__for_each_struct(cu, id, pos)				\
 	for (id = 1; id < cu->types_table.nr_entries; ++id)		\
 		if (!(pos = tag__class(cu->types_table.entries[id])) || \
 		    !tag__is_struct(class__tag(pos)))			\
+			continue;					\
+		else
+
+/**
+ * cu__for_each_struct_or_union - iterate thru all the struct and union tags
+ * @cu: struct cu instance to iterate
+ * @pos: struct class iterator
+ * @id: type_id_t tag id
+ */
+#define cu__for_each_struct_or_union(cu, id, pos)			\
+	for (id = 1; id < cu->types_table.nr_entries; ++id)		\
+		if (!(pos = tag__class(cu->types_table.entries[id])) || \
+		    !(tag__is_struct(class__tag(pos)) || 		\
+		      tag__is_union(class__tag(pos))))			\
 			continue;					\
 		else
 
@@ -292,31 +329,35 @@ static inline __pure bool cu__is_c_plus_plus(const struct cu *cu)
 			continue;			\
 		else
 
-int cu__add_tag(struct cu *cu, struct tag *tag, long *id);
-int cu__table_add_tag(struct cu *cu, struct tag *tag, long *id);
+int cu__add_tag(struct cu *cu, struct tag *tag, uint32_t *id);
+int cu__add_tag_with_id(struct cu *cu, struct tag *tag, uint32_t id);
+int cu__table_add_tag(struct cu *cu, struct tag *tag, uint32_t *id);
+int cu__table_add_tag_with_id(struct cu *cu, struct tag *tag, uint32_t id);
 int cu__table_nullify_type_entry(struct cu *cu, uint32_t id);
 struct tag *cu__find_base_type_by_name(const struct cu *cu, const char *name,
-				       uint16_t *id);
+				       type_id_t *id);
 struct tag *cu__find_base_type_by_sname_and_size(const struct cu *cu,
 						 strings_t name,
 						 uint16_t bit_size,
-						 uint16_t *idp);
+						 type_id_t *idp);
 struct tag *cu__find_enumeration_by_sname_and_size(const struct cu *cu,
 						   strings_t sname,
 						   uint16_t bit_size,
-						   uint16_t *idp);
+						   type_id_t *idp);
 struct tag *cu__find_first_typedef_of_type(const struct cu *cu,
-					   const uint16_t type);
+					   const type_id_t type);
 struct tag *cu__find_function_by_name(const struct cu *cu, const char *name);
 struct tag *cu__find_struct_by_sname(const struct cu *cu, strings_t sname,
-				     const int include_decls, uint16_t *idp);
+				     const int include_decls, type_id_t *idp);
 struct function *cu__find_function_at_addr(const struct cu *cu,
 					   uint64_t addr);
 struct tag *cu__function(const struct cu *cu, const uint32_t id);
 struct tag *cu__tag(const struct cu *cu, const uint32_t id);
-struct tag *cu__type(const struct cu *cu, const uint16_t id);
+struct tag *cu__type(const struct cu *cu, const type_id_t id);
 struct tag *cu__find_struct_by_name(const struct cu *cu, const char *name,
-				    const int include_decls, uint16_t *id);
+				    const int include_decls, type_id_t *id);
+struct tag *cu__find_struct_or_union_by_name(const struct cu *cu, const char *name,
+					     const int include_decls, type_id_t *id);
 bool cu__same_build_id(const struct cu *cu, const struct cu *other);
 void cu__account_inline_expansions(struct cu *cu);
 int cu__for_all_tags(struct cu *cu,
@@ -330,7 +371,7 @@ int cu__for_all_tags(struct cu *cu,
  */
 struct tag {
 	struct list_head node;
-	uint16_t	 type;
+	type_id_t	 type;
 	uint16_t	 tag;
 	bool		 visited;
 	bool		 top_level;
@@ -377,6 +418,16 @@ static inline int tag__is_const(const struct tag *tag)
 	return tag->tag == DW_TAG_const_type;
 }
 
+static inline int tag__is_pointer(const struct tag *tag)
+{
+	return tag->tag == DW_TAG_pointer_type;
+}
+
+static inline int tag__is_pointer_to(const struct tag *tag, type_id_t type)
+{
+	return tag__is_pointer(tag) && tag->type == type;
+}
+
 static inline bool tag__is_variable(const struct tag *tag)
 {
 	return tag->tag == DW_TAG_variable;
@@ -385,6 +436,18 @@ static inline bool tag__is_variable(const struct tag *tag)
 static inline bool tag__is_volatile(const struct tag *tag)
 {
 	return tag->tag == DW_TAG_volatile_type;
+}
+
+static inline bool tag__is_restrict(const struct tag *tag)
+{
+	return tag->tag == DW_TAG_restrict_type;
+}
+
+static inline int tag__is_modifier(const struct tag *tag)
+{
+	return tag__is_const(tag) ||
+	       tag__is_volatile(tag) ||
+	       tag__is_restrict(tag);
 }
 
 static inline bool tag__has_namespace(const struct tag *tag)
@@ -474,8 +537,9 @@ void tag__not_found_die(const char *file, int line, const char *func);
 size_t tag__size(const struct tag *tag, const struct cu *cu);
 size_t tag__nr_cachelines(const struct tag *tag, const struct cu *cu);
 struct tag *tag__follow_typedef(const struct tag *tag, const struct cu *cu);
+struct tag *tag__strip_typedefs_and_modifiers(const struct tag *tag, const struct cu *cu);
 
-size_t __tag__id_not_found_fprintf(FILE *fp, uint16_t id,
+size_t __tag__id_not_found_fprintf(FILE *fp, type_id_t id,
 				   const char *fn, int line);
 #define tag__id_not_found_fprintf(fp, id) \
 	__tag__id_not_found_fprintf(fp, id, __func__, __LINE__)
@@ -488,7 +552,7 @@ int __tag__has_type_loop(const struct tag *tag, const struct tag *type,
 
 struct ptr_to_member_type {
 	struct tag tag;
-	uint16_t   containing_type;
+	type_id_t  containing_type;
 };
 
 static inline struct ptr_to_member_type *
@@ -571,20 +635,26 @@ static inline const char *label__name(const struct label *label,
 	return cu__string(cu, label->name);
 }
 
-enum vlocation {
-	LOCATION_UNKNOWN,
-	LOCATION_LOCAL,
-	LOCATION_GLOBAL,
-	LOCATION_REGISTER,
-	LOCATION_OPTIMIZED
+enum vscope {
+	VSCOPE_UNKNOWN,
+	VSCOPE_LOCAL,
+	VSCOPE_GLOBAL,
+	VSCOPE_REGISTER,
+	VSCOPE_OPTIMIZED
 } __attribute__((packed));
+
+struct location {
+	Dwarf_Op *expr;
+	size_t	  exprlen;
+};
 
 struct variable {
 	struct ip_tag	 ip;
 	strings_t	 name;
 	uint8_t		 external:1;
 	uint8_t		 declaration:1;
-	enum vlocation	 location;
+	enum vscope	 scope;
+	struct location	 location;
 	struct hlist_node tool_hnode;
 };
 
@@ -592,6 +662,9 @@ static inline struct variable *tag__variable(const struct tag *tag)
 {
 	return (struct variable *)tag;
 }
+
+enum vscope variable__scope(const struct variable *var);
+const char *variable__scope_str(const struct variable *var);
 
 const char *variable__name(const struct variable *var, const struct cu *cu);
 
@@ -695,7 +768,7 @@ size_t ftype__fprintf(const struct ftype *ftype, const struct cu *cu,
 size_t ftype__fprintf_parms(const struct ftype *ftype,
 			    const struct cu *cu, int indent,
 			    const struct conf_fprintf *conf, FILE *fp);
-int ftype__has_parm_of_type(const struct ftype *ftype, const uint16_t target,
+int ftype__has_parm_of_type(const struct ftype *ftype, const type_id_t target,
 			    const struct cu *cu);
 
 struct function {
@@ -790,9 +863,10 @@ static inline int function__inlined(const struct function *func)
  * @byte_offset - offset in bytes from the start of the struct
  * @byte_size - cached byte size, integral type byte size for bitfields
  * @bitfield_offset - offset in the current bitfield
- * @bitfield_offset - size in the current bitfield
+ * @bitfield_size - size in the current bitfield
  * @bit_hole - If there is a bit hole before the next one (or the end of the struct)
  * @bitfield_end - Is this the last entry in a bitfield?
+ * @alignment - DW_AT_alignement, zero if not present, gcc emits since circa 7.3.1
  * @accessibility - DW_ACCESS_{public,protected,private}
  * @virtuality - DW_VIRTUALITY_{none,virtual,pure_virtual}
  * @hole - If there is a hole before the next one (or the end of the struct)
@@ -804,11 +878,12 @@ struct class_member {
 	uint32_t	 bit_size;
 	uint32_t	 byte_offset;
 	size_t		 byte_size;
-	uint8_t		 bitfield_offset;
+	int8_t		 bitfield_offset;
 	uint8_t		 bitfield_size;
 	uint8_t		 bit_hole;
 	uint8_t		 bitfield_end:1;
 	uint64_t	 const_value;
+	uint32_t	 alignment;
 	uint8_t		 visited:1;
 	uint8_t		 is_static:1;
 	uint8_t		 accessibility:2;
@@ -840,6 +915,8 @@ static __pure inline int tag__is_class_member(const struct tag *tag)
  * @nnr_members: number of non static DW_TAG_member entries
  * @nr_static_members: number of static DW_TAG_member entries
  * @nr_tags: number of tags
+ * @alignment: DW_AT_alignement, zero if not present, gcc emits since circa 7.3.1
+ * @natural_alignment: For inferring __packed__, normally the widest scalar in it, recursively
  */
 struct type {
 	struct namespace namespace;
@@ -848,6 +925,9 @@ struct type {
 	int32_t		 size_diff;
 	uint16_t	 nr_static_members;
 	uint16_t	 nr_members;
+	uint32_t	 alignment;
+	uint16_t	 natural_alignment;
+	bool		 packed_attributes_inferred;
 	uint8_t		 declaration; /* only one bit used */
 	uint8_t		 definition_emitted:1;
 	uint8_t		 fwd_decl_emitted:1;
@@ -857,6 +937,11 @@ struct type {
 static inline struct class *type__class(const struct type *type)
 {
 	return (struct class *)type;
+}
+
+static inline struct tag *type__tag(const struct type *type)
+{
+	return (struct tag *)type;
 }
 
 void type__delete(struct type *type, struct cu *cu);
@@ -957,7 +1042,7 @@ struct class_member *
 struct class_member *type__find_member_by_name(const struct type *type,
 					       const struct cu *cu,
 					       const char *name);
-uint32_t type__nr_members_of_type(const struct type *type, const uint16_t oftype);
+uint32_t type__nr_members_of_type(const struct type *type, const type_id_t oftype);
 struct class_member *type__last_member(struct type *type);
 
 size_t typedef__fprintf(const struct tag *tag_type, const struct cu *cu,
@@ -974,9 +1059,12 @@ struct class {
 	uint16_t	 nr_vtable_entries;
 	uint8_t		 nr_holes;
 	uint8_t		 nr_bit_holes;
+	uint16_t	 pre_hole;
 	uint16_t	 padding;
+	uint8_t		 pre_bit_hole;
 	uint8_t		 bit_padding;
 	bool		 holes_searched;
+	bool		 is_packed;
 	void		 *priv;
 };
 
@@ -1024,6 +1112,13 @@ static inline int class__is_struct(const struct class *cls)
 
 void class__find_holes(struct class *cls);
 int class__has_hole_ge(const struct class *cls, const uint16_t size);
+
+bool class__infer_packed_attributes(struct class *cls, const struct cu *cu);
+
+void union__infer_packed_attributes(struct type *type, const struct cu *cu);
+
+void type__check_structs_at_unnatural_alignments(struct type *type, const struct cu *cu);
+
 size_t class__fprintf(struct class *cls, const struct cu *cu, FILE *fp);
 
 void class__add_vtable_entry(struct class *cls, struct function *vtable_entry);
@@ -1052,6 +1147,33 @@ static inline int class__is_declaration(const struct class *cls)
 const struct class_member *class__find_bit_hole(const struct class *cls,
 					   const struct class_member *trailer,
 						const uint16_t bit_hole_size);
+
+#define class__for_each_member_from(cls, from, pos)			\
+	pos = list_prepare_entry(from, class__tags(cls), tag.node);	\
+	list_for_each_entry_from(pos, class__tags(cls), tag.node)	\
+		if (!tag__is_class_member(&pos->tag))			\
+			continue;					\
+		else
+
+#define class__for_each_member_safe_from(cls, from, pos, tmp)			\
+	pos = list_prepare_entry(from, class__tags(cls), tag.node);		\
+	list_for_each_entry_safe_from(pos, tmp, class__tags(cls), tag.node)	\
+		if (!tag__is_class_member(&pos->tag))				\
+			continue;						\
+		else
+
+#define class__for_each_member_continue(cls, from, pos)			\
+	pos = list_prepare_entry(from, class__tags(cls), tag.node);	\
+	list_for_each_entry_continue(pos, class__tags(cls), tag.node)	\
+		if (!tag__is_class_member(&pos->tag))			\
+			continue;					\
+		else
+
+#define class__for_each_member_reverse(cls, member)			\
+	list_for_each_entry_reverse(member, class__tags(cls), tag.node)	\
+		if (member->tag.tag != DW_TAG_member)			\
+			continue;					\
+		else
 
 enum base_type_float_type {
 	BT_FP_SINGLE = 1,
@@ -1132,5 +1254,7 @@ const char *dwarf_tag_name(const uint32_t tag);
 struct argp_state;
 
 void dwarves_print_version(FILE *fp, struct argp_state *state);
+
+extern bool no_bitfield_type_recode;
 
 #endif /* _DWARVES_H_ */

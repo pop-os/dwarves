@@ -2,17 +2,16 @@
 %define libver 1
 
 Name: dwarves
-Version: 1.12
+Version: 1.15
 Release: 1%{?dist}
 License: GPLv2
-Summary: Debugging Information Manipulation Tools
-Group: Development/Tools
+Summary: Debugging Information Manipulation Tools (pahole & friends)
 URL: http://acmel.wordpress.com
-Source: http://fedorapeople.org/~acme/dwarves/%{name}-%{version}.tar.bz2
+Source: http://fedorapeople.org/~acme/dwarves/%{name}-%{version}.tar.xz
+BuildRequires: gcc
 BuildRequires: cmake
 BuildRequires: zlib-devel
 BuildRequires: elfutils-devel >= 0.130
-BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 %description
 dwarves is a set of tools that use the debugging information inserted in
@@ -26,8 +25,8 @@ limited to these.
 It also extracts other information such as CPU cacheline alignment, helping
 pack those structures to achieve more cache hits.
 
-These tools can also be used to encode the BTF type information format used with
-the Linux kernel bpf syscall, using 'pahole -J'.
+These tools can also be used to encode and read the BTF type information format
+used with the Linux kernel bpf syscall, using 'pahole -J' and 'pahole -F btf'.
 
 A diff like tool, codiff can be used to compare the effects changes in source
 code generate on the resulting binaries.
@@ -37,14 +36,12 @@ functions, inlines, decisions made by the compiler about inlining, etc.
 
 %package -n %{libname}%{libver}
 Summary: Debugging information  processing library
-Group: Development/Libraries
 
 %description -n %{libname}%{libver}
 Debugging information processing library.
 
 %package -n %{libname}%{libver}-devel
 Summary: Debugging information library development files
-Group: Development/Libraries
 Requires: %{libname}%{libver} = %{version}-%{release}
 
 %description -n %{libname}%{libver}-devel
@@ -61,22 +58,17 @@ make VERBOSE=1 %{?_smp_mflags}
 rm -Rf %{buildroot}
 make install DESTDIR=%{buildroot}
 
-%post -n %{libname}%{libver} -p /sbin/ldconfig
-
-%postun -n %{libname}%{libver} -p /sbin/ldconfig
-
-%clean
-rm -rf %{buildroot}
+%ldconfig_scriptlets -n %{libname}%{libver}
 
 %files
-%defattr(0644,root,root,0755)
 %doc README.ctracer
 %doc README.btf
 %doc NEWS
-%defattr(0755,root,root,0755)
+%{_bindir}/btfdiff
 %{_bindir}/codiff
 %{_bindir}/ctracer
 %{_bindir}/dtagnames
+%{_bindir}/fullcircle
 %{_bindir}/pahole
 %{_bindir}/pdwtags
 %{_bindir}/pfunct
@@ -97,19 +89,26 @@ rm -rf %{buildroot}
 %attr(0755,root,root) %{_datadir}/dwarves/runtime/python/ostra.py*
 
 %files -n %{libname}%{libver}
-%defattr(0644,root,root,0755)
 %{_libdir}/%{libname}.so.*
 %{_libdir}/%{libname}_emit.so.*
 %{_libdir}/%{libname}_reorganize.so.*
 
 %files -n %{libname}%{libver}-devel
-%defattr(0644,root,root,0755)
 %doc MANIFEST README
+%{_includedir}/dwarves/btf_encoder.h
+%{_includedir}/dwarves/config.h
+%{_includedir}/dwarves/ctf_encoder.h
+%{_includedir}/dwarves/ctf.h
+%{_includedir}/dwarves/dutil.h
 %{_includedir}/dwarves/dwarves.h
 %{_includedir}/dwarves/dwarves_emit.h
 %{_includedir}/dwarves/dwarves_reorganize.h
-%{_includedir}/dwarves/dutil.h
+%{_includedir}/dwarves/elfcreator.h
+%{_includedir}/dwarves/elf_symtab.h
 %{_includedir}/dwarves/gobuffer.h
+%{_includedir}/dwarves/hash.h
+%{_includedir}/dwarves/libbtf.h
+%{_includedir}/dwarves/libctf.h
 %{_includedir}/dwarves/list.h
 %{_includedir}/dwarves/rbtree.h
 %{_includedir}/dwarves/strings.h
@@ -118,6 +117,22 @@ rm -rf %{buildroot}
 %{_libdir}/%{libname}_reorganize.so
 
 %changelog
+* Fri May 27 2019 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.15-1
+- New release: 1.15
+- Fix --expand_types/-E segfault
+- Fixup endless printing named structs inside structs in --expand_types
+- Avoid NULL deref with num config in __class__fprintf()
+
+* Tue Apr 23 2019 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.13-1
+- New release: 1.13
+- Infer __packed__ attributes, i.e. __attribute__((__packed__))
+- Support DW_AT_alignment, i.e. __attribute__((__aligned__(N)))
+- Decode BTF type format and pretty print it
+- BTF encoding fixes
+- Use libbpf's BTF deduplication
+- Support unions as arguments to -C/--class
+- New 'pfunct --compile' generates compilable output with type definitions
+
 * Thu Aug 16 2018 Arnaldo Carvalho de Melo <acme@kernel.org> - 1.12-1
 - New release:
 - union member cacheline boundaries for all inner structs

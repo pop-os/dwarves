@@ -1,11 +1,9 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
   Copyright (C) 2007 Arnaldo Carvalho de Melo <acme@redhat.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <argp.h>
@@ -32,12 +30,15 @@ static int show_cc_uninlined;
 static char *symtab_name;
 static bool show_prototypes;
 static bool expand_types;
+static bool compilable_output;
 static struct type_emissions emissions;
 static uint64_t addr;
 
 static struct conf_fprintf conf;
 
-static struct conf_load conf_load;
+static struct conf_load conf_load = {
+	.conf_fprintf = &conf,
+};
 
 struct fn_stats {
 	struct list_head node;
@@ -294,7 +295,7 @@ static int cu_unique_iterator(struct cu *cu, void *cookie __unused)
 
 static int cu_class_iterator(struct cu *cu, void *cookie)
 {
-	uint16_t target_id;
+	type_id_t target_id;
 	struct tag *target = cu__find_struct_by_name(cu, cookie, 0, &target_id);
 
 	if (target == NULL)
@@ -322,21 +323,40 @@ static int function__emit_type_definitions(struct function *func,
 					   struct cu *cu, FILE *fp)
 {
 	struct parameter *pos;
+	struct tag *type = cu__type(cu, func->proto.tag.type);
 
+retry_return_type:
+	/* type == NULL means the return is void */
+	if (type == NULL)
+		goto do_parameters;
+
+	if (tag__is_pointer(type) || tag__is_modifier(type)) {
+		type = cu__type(cu, type->type);
+		goto retry_return_type;
+	}
+
+	if (tag__is_type(type) && !tag__type(type)->definition_emitted) {
+		type__emit_definitions(type, cu, &emissions, fp);
+		type__emit(type, cu, NULL, NULL, fp);
+	}
+do_parameters:
 	function__for_each_parameter(func, pos) {
-		struct tag *type = cu__type(cu, pos->tag.type);
+		type = cu__type(cu, pos->tag.type);
 	try_again:
 		if (type == NULL)
 			continue;
 
-		if (type->tag == DW_TAG_pointer_type) {
+		if (tag__is_pointer(type) || tag__is_modifier(type)) {
 			type = cu__type(cu, type->type);
 			goto try_again;
 		}
 
-		if (tag__is_type(type)) {
+		if (type->tag == DW_TAG_subroutine_type) {
+			ftype__emit_definitions(tag__ftype(type), cu, &emissions, fp);
+		} else if (tag__is_type(type) && !tag__type(type)->definition_emitted) {
 			type__emit_definitions(type, cu, &emissions, fp);
-			type__emit(type, cu, NULL, NULL, fp);
+			if (!tag__is_typedef(type))
+				type__emit(type, cu, NULL, NULL, fp);
 			putchar('\n');
 		}
 	}
@@ -348,9 +368,30 @@ static void function__show(struct function *func, struct cu *cu)
 {
 	struct tag *tag = function__tag(func);
 
+	if (func->abstract_origin || func->external)
+		return;
+
 	if (expand_types)
 		function__emit_type_definitions(func, cu, stdout);
 	tag__fprintf(tag, cu, &conf, stdout);
+	if (compilable_output) {
+		struct tag *type = cu__type(cu, func->proto.tag.type);
+
+		fprintf(stdout, "\n{");
+		if (type != NULL) { /* NULL == void */
+			if (tag__is_pointer(type))
+				fprintf(stdout, "\n\treturn (void *)0;");
+			else if (tag__is_struct(type))
+				fprintf(stdout, "\n\treturn *(struct %s *)1;", class__name(tag__class(type), cu));
+			else if (tag__is_union(type))
+				fprintf(stdout, "\n\treturn *(union %s *)1;", type__name(tag__type(type), cu));
+			else if (tag__is_typedef(type))
+				fprintf(stdout, "\n\treturn *(%s *)1;", type__name(tag__type(type), cu));
+			else
+				fprintf(stdout, "\n\treturn 0;");
+		}
+		fprintf(stdout, "\n}\n");
+	}
 	putchar('\n');
 	if (show_variables || show_inline_expansions)
 		function__fprintf_stats(tag, cu, &conf, stdout);
@@ -362,10 +403,11 @@ static int cu_function_iterator(struct cu *cu, void *cookie)
 	uint32_t id;
 
 	cu__for_each_function(cu, id, function) {
-		if (strcmp(function__name(function, cu), cookie) != 0)
+		if (cookie && strcmp(function__name(function, cu), cookie) != 0)
 			continue;
 		function__show(function, cu);
-		return 1;
+		if (!expand_types)
+			return 1;
 	}
 	return 0;
 }
@@ -456,6 +498,7 @@ ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 
 #define ARGP_symtab		300
 #define ARGP_no_parm_names	301
+#define ARGP_compile		302
 
 static const struct argp_option pfunct__options[] = {
 	{
@@ -570,6 +613,13 @@ static const struct argp_option pfunct__options[] = {
 		.doc   = "show symbol table NAME (Default .symtab)",
 	},
 	{
+		.name  = "compile",
+		.key   = ARGP_compile,
+		.arg   = "FUNCTION",
+		.flags = OPTION_ARG_OPTIONAL,
+		.doc   = "Generate compilable source code with types expanded (Default all functions)",
+	},
+	{
 		.name  = "no_parm_names",
 		.key   = ARGP_no_parm_names,
 		.doc   = "Don't show parameter names",
@@ -624,6 +674,15 @@ static error_t pfunct__options_parser(int key, char *arg,
 		  conf_load.get_addr_info = true;	 break;
 	case ARGP_symtab: symtab_name = arg ?: ".symtab";  break;
 	case ARGP_no_parm_names: conf.no_parm_names = 1; break;
+	case ARGP_compile:
+		  expand_types = true;
+		  type_emissions__init(&emissions);
+		  compilable_output = true;
+		  conf.no_semicolon = true;
+		  conf.strip_inline = true;
+		  if (arg)
+			  function_name = arg;
+		  break;
 	default:  return ARGP_ERR_UNKNOWN;
 	}
 
@@ -684,7 +743,7 @@ int main(int argc, char *argv[])
 		print_total_inline_stats();
 	else if (class_name != NULL)
 		cus__for_each_cu(cus, cu_class_iterator, class_name, NULL);
-	else if (function_name != NULL)
+	else if (function_name != NULL || expand_types)
 		cus__for_each_cu(cus, cu_function_iterator,
 				 function_name, NULL);
 	else

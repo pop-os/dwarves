@@ -1,12 +1,10 @@
 /*
+  SPDX-License-Identifier: GPL-2.0-only
+
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
   Copyright (C) 2007 Red Hat Inc.
   Copyright (C) 2007 Arnaldo Carvalho de Melo <acme@redhat.com>
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms of version 2 of the GNU General Public License as
-  published by the Free Software Foundation.
 */
 
 #include <string.h>
@@ -61,9 +59,15 @@ static struct type *type_emissions__find_fwd_decl(const struct type_emissions *e
 {
 	struct type *pos;
 
-	list_for_each_entry(pos, &emissions->fwd_decls, node)
-		if (strcmp(type__name(pos, cu), name) == 0)
+	if (name == NULL)
+		return NULL;
+
+	list_for_each_entry(pos, &emissions->fwd_decls, node) {
+		const char *curr_name = type__name(pos, cu);
+
+		if (curr_name && strcmp(curr_name, name) == 0)
 			return pos;
+	}
 
 	return NULL;
 }
@@ -133,8 +137,13 @@ static int typedef__emit_definitions(struct tag *tdef, struct cu *cu,
 		break;
 	case DW_TAG_pointer_type:
 		ptr_type = cu__type(cu, type->type);
-		tag__assert_search_result(ptr_type);
-		if (ptr_type->tag != DW_TAG_subroutine_type)
+		/* void ** can make ptr_type be NULL */
+		if (ptr_type == NULL)
+			break;
+		if (ptr_type->tag == DW_TAG_typedef) {
+			typedef__emit_definitions(ptr_type, cu, emissions, fp);
+			break;
+		} else if (ptr_type->tag != DW_TAG_subroutine_type)
 			break;
 		type = ptr_type;
 		is_pointer = 1;
@@ -197,9 +206,12 @@ int type__emit_fwd_decl(struct type *ctype, const struct cu *cu,
 	if (ctype->fwd_decl_emitted)
 		return 0;
 
+	const char *name = type__name(ctype, cu);
+	if (name == NULL)
+		return 0;
+
 	/* Ok, lets look at the previous CUs: */
-	if (type_emissions__find_fwd_decl(emissions, cu,
-					  type__name(ctype, cu)) != NULL) {
+	if (type_emissions__find_fwd_decl(emissions, cu, name) != NULL) {
 		/*
 		 * Yes, so lets mark it visited on this CU too,
 		 * to speed up the lookup.
@@ -249,9 +261,17 @@ next_indirection:
 		break;
 	case DW_TAG_structure_type:
 	case DW_TAG_union_type:
-		if (pointer)
+		if (pointer) {
+			/*
+			 * Struct defined inline, no name, need to have its
+			 * members types emitted.
+			 */
+			if (type__name(tag__type(type), cu) == NULL)
+				type__emit_definitions(type, cu, emissions, fp);
+
 			return type__emit_fwd_decl(tag__type(type), cu,
 						   emissions, fp);
+		}
 		if (type__emit_definitions(type, cu, emissions, fp))
 			type__emit(type, cu, NULL, NULL, fp);
 		return 1;
@@ -296,7 +316,12 @@ int type__emit_definitions(struct tag *tag, struct cu *cu,
 		return 0;
 	}
 
+	if (tag__is_typedef(tag))
+		return typedef__emit_definitions(tag, cu, emissions, fp);
+
 	type_emissions__add_definition(emissions, ctype);
+
+	type__check_structs_at_unnatural_alignments(ctype, cu);
 
 	type__for_each_member(ctype, pos)
 		if (tag__emit_definitions(&pos->tag, cu, emissions, fp))

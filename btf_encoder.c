@@ -1,6 +1,17 @@
+/*
+  SPDX-License-Identifier: GPL-2.0-only
+
+  Copyright (C) 2019 Facebook
+
+  Derived from ctf_encoder.c, which is:
+
+  Copyright (C) Arnaldo Carvalho de Melo <acme@redhat.com>
+  Copyright (C) Red Hat Inc
+ */
+
 #include "dwarves.h"
 #include "libbtf.h"
-#include "btf.h"
+#include "lib/bpf/include/uapi/linux/btf.h"
 #include "hash.h"
 #include "elf_symtab.h"
 #include "btf_encoder.h"
@@ -8,36 +19,62 @@
 #include <inttypes.h>
 
 static int tag__check_id_drift(const struct tag *tag,
-			       uint32_t core_id, uint32_t btf_type_id)
+			       uint32_t core_id, uint32_t btf_type_id,
+			       uint32_t type_id_off)
 {
-	if (btf_type_id != core_id) {
-		fprintf(stderr, "%s: %s id drift, core_id: %u, btf_type_id: %u\n",
+	if (btf_type_id != (core_id + type_id_off)) {
+		fprintf(stderr,
+			"%s: %s id drift, core_id: %u, btf_type_id: %u, type_id_off: %u\n",
 			__func__, dwarf_tag_name(tag->tag),
-			core_id, btf_type_id);
+			core_id, btf_type_id, type_id_off);
 		return -1;
 	}
 
 	return 0;
 }
 
-static int32_t structure_type__encode(struct btf *btf, struct tag *tag)
+static int32_t structure_type__encode(struct btf_elf *btfe, struct tag *tag, uint32_t type_id_off)
 {
 	struct type *type = tag__type(tag);
 	struct class_member *pos;
+	bool kind_flag = false;
 	int32_t type_id;
 	uint8_t kind;
 
 	kind = (tag->tag == DW_TAG_union_type) ?
 		BTF_KIND_UNION : BTF_KIND_STRUCT;
-	type_id = btf__add_struct(btf, kind, type->namespace.name,
-				  type->size, type->nr_members);
+
+	/* Although no_bitfield_type_recode has been set true
+	 * in pahole.c if BTF encoding is requested, we still check
+	 * the value here. So if no_bitfield_type_recode is set
+	 * to false for whatever reason, we do not accidentally
+	 * set kind_flag incorrectly.
+	 */
+	if (no_bitfield_type_recode) {
+		/* kind_flag only set where there is a bitfield
+		 * in the struct.
+		 */
+		type__for_each_data_member(type, pos) {
+			if (pos->bitfield_size) {
+				kind_flag = true;
+				break;
+			}
+		}
+	}
+
+	type_id = btf_elf__add_struct(btfe, kind, type->namespace.name, kind_flag, type->size, type->nr_members);
 	if (type_id < 0)
 		return type_id;
 
-	type__for_each_data_member(type, pos)
-		if (btf__add_member(btf, pos->name, pos->tag.type,
-				    pos->bit_offset))
+	type__for_each_data_member(type, pos) {
+		/*
+		 * dwarf_loader uses DWARF's recommended bit offset addressing
+		 * scheme, which conforms to BTF requirement, so no conversion
+		 * is required.
+		 */
+		if (btf_elf__add_member(btfe, pos->name, type_id_off + pos->tag.type, kind_flag, pos->bitfield_size, pos->bit_offset))
 			return -1;
+	}
 
 	return type_id;
 }
@@ -54,62 +91,56 @@ static uint32_t array_type__nelems(struct tag *tag)
 	return nelem;
 }
 
-static int32_t enumeration_type__encode(struct btf *btf, struct tag *tag)
+static int32_t enumeration_type__encode(struct btf_elf *btfe, struct tag *tag)
 {
 	struct type *etype = tag__type(tag);
 	struct enumerator *pos;
 	int32_t type_id;
 
-	type_id = btf__add_enum(btf, etype->namespace.name,
-				etype->size, etype->nr_members);
+	type_id = btf_elf__add_enum(btfe, etype->namespace.name, etype->size, etype->nr_members);
 	if (type_id < 0)
 		return type_id;
 
 	type__for_each_enumerator(etype, pos)
-		if (btf__add_enum_val(btf, pos->name, pos->value))
+		if (btf_elf__add_enum_val(btfe, pos->name, pos->value))
 			return -1;
 
 	return type_id;
 }
 
-static int tag__encode_btf(struct tag *tag, uint32_t core_id, struct btf *btf,
-			   uint32_t array_index_id)
+static int tag__encode_btf(struct tag *tag, uint32_t core_id, struct btf_elf *btfe,
+			   uint32_t array_index_id, uint32_t type_id_off)
 {
+	/* single out type 0 as it represents special type "void" */
+	uint32_t ref_type_id = tag->type == 0 ? 0 : type_id_off + tag->type;
+
 	switch (tag->tag) {
 	case DW_TAG_base_type:
-		return btf__add_base_type(btf, tag__base_type(tag));
+		return btf_elf__add_base_type(btfe, tag__base_type(tag));
 	case DW_TAG_const_type:
-		return btf__add_ref_type(btf, BTF_KIND_CONST, tag->type, 0);
+		return btf_elf__add_ref_type(btfe, BTF_KIND_CONST, ref_type_id, 0, false);
 	case DW_TAG_pointer_type:
-		return btf__add_ref_type(btf, BTF_KIND_PTR, tag->type, 0);
+		return btf_elf__add_ref_type(btfe, BTF_KIND_PTR, ref_type_id, 0, false);
 	case DW_TAG_restrict_type:
-		return btf__add_ref_type(btf, BTF_KIND_RESTRICT, tag->type, 0);
+		return btf_elf__add_ref_type(btfe, BTF_KIND_RESTRICT, ref_type_id, 0, false);
 	case DW_TAG_volatile_type:
-		return btf__add_ref_type(btf, BTF_KIND_VOLATILE, tag->type, 0);
+		return btf_elf__add_ref_type(btfe, BTF_KIND_VOLATILE, ref_type_id, 0, false);
 	case DW_TAG_typedef:
-		return btf__add_ref_type(btf, BTF_KIND_TYPEDEF, tag->type,
-					 tag__namespace(tag)->name);
+		return btf_elf__add_ref_type(btfe, BTF_KIND_TYPEDEF, ref_type_id, tag__namespace(tag)->name, false);
 	case DW_TAG_structure_type:
 	case DW_TAG_union_type:
 	case DW_TAG_class_type:
 		if (tag__type(tag)->declaration)
-			return btf__add_ref_type(btf, BTF_KIND_FWD, 0,
-						 tag__namespace(tag)->name);
+			return btf_elf__add_ref_type(btfe, BTF_KIND_FWD, 0, tag__namespace(tag)->name, tag->tag == DW_TAG_union_type);
 		else
-			return structure_type__encode(btf, tag);
+			return structure_type__encode(btfe, tag, type_id_off);
 	case DW_TAG_array_type:
-		return btf__add_array(btf, tag->type, array_index_id,
-				      /*TODO: Encode one dimension
-				       *       at a time.
-				       */
-				      array_type__nelems(tag));
+		/* TODO: Encode one dimension at a time. */
+		return btf_elf__add_array(btfe, ref_type_id, array_index_id, array_type__nelems(tag));
 	case DW_TAG_enumeration_type:
-		return enumeration_type__encode(btf, tag);
+		return enumeration_type__encode(btfe, tag);
 	case DW_TAG_subroutine_type:
-		/* A dummy void * to avoid a shift in btf->type_index */
-		btf_verbose_log("Filling unsupported DW_TAG_%s(0x%x) with void *\n",
-				dwarf_tag_name(tag->tag), tag->tag);
-		return btf__add_ref_type(btf, BTF_KIND_PTR, 0, 0);
+		return btf_elf__add_func_proto(btfe, tag__ftype(tag), type_id_off);
 	default:
 		fprintf(stderr, "Unsupported DW_TAG_%s(0x%x)\n",
 			dwarf_tag_name(tag->tag), tag->tag);
@@ -123,52 +154,79 @@ static int tag__encode_btf(struct tag *tag, uint32_t core_id, struct btf *btf,
  */
 extern struct strings *strings;
 
-int cu__encode_btf(struct cu *cu, int verbose)
+static struct btf_elf *btfe;
+static uint32_t array_index_id;
+
+int btf_encoder__encode()
 {
-	struct btf *btf = btf__new(cu->filename, cu->elf);
-	struct tag *pos;
-	uint32_t core_id, array_index_id;
-	uint16_t id;
 	int err;
 
-	btf_verbose = verbose;
+	err = btf_elf__encode(btfe, 0);
+	btf_elf__delete(btfe);
+	btfe = NULL;
 
-	if (btf == NULL)
-		return -1;
+	return err;
+}
 
-	btf__set_strings(btf, &strings->gb);
+int cu__encode_btf(struct cu *cu, int verbose)
+{
+	bool add_index_type = false;
+	uint32_t type_id_off;
+	uint32_t core_id;
+	struct tag *pos;
+	int err = 0;
 
-	/* cu__find_base_type_by_name() takes "uint16_t *id" */
-	if (!cu__find_base_type_by_name(cu, "int", &id))
-		id = cu->types_table.nr_entries;
-	array_index_id = id;
+	if (btfe && strcmp(btfe->filename, cu->filename)) {
+		err = btf_encoder__encode();
+		if (err)
+			goto out;
+
+		/* Finished one file, add one empty line */
+		if (verbose)
+			printf("\n");
+	}
+
+	if (!btfe) {
+		btfe = btf_elf__new(cu->filename, cu->elf);
+		if (!btfe)
+			return -1;
+		btf_elf__set_strings(btfe, &strings->gb);
+
+		/* cu__find_base_type_by_name() takes "type_id_t *id" */
+		type_id_t id;
+		if (!cu__find_base_type_by_name(cu, "int", &id)) {
+			add_index_type = true;
+			id = cu->types_table.nr_entries;
+		}
+		array_index_id = id;
+
+		if (verbose)
+			printf("File %s:\n", btfe->filename);
+	}
+
+	btf_elf__verbose = verbose;
+	type_id_off = btfe->type_index;
 
 	cu__for_each_type(cu, core_id, pos) {
-		int32_t btf_type_id = tag__encode_btf(pos, core_id, btf,
-						      array_index_id);
+		int32_t btf_type_id = tag__encode_btf(pos, core_id, btfe, array_index_id, type_id_off);
 
 		if (btf_type_id < 0 ||
-		    tag__check_id_drift(pos, core_id, btf_type_id)) {
+		    tag__check_id_drift(pos, core_id, btf_type_id, type_id_off)) {
 			err = -1;
 			goto out;
 		}
-
-		id = btf_type_id;
 	}
 
-	if (array_index_id == cu->types_table.nr_entries) {
+	if (add_index_type) {
 		struct base_type bt = {};
 
 		bt.name = 0;
 		bt.bit_size = 32;
-		btf__add_base_type(btf, &bt);
+		btf_elf__add_base_type(btfe, &bt);
 	}
 
-	err = btf__encode(btf, 0);
-
 out:
-	btf__free(btf);
 	if (err)
-		fprintf(stderr, "Failed to encode BTF\n");
+		btf_elf__delete(btfe);
 	return err;
 }
