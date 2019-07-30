@@ -1,9 +1,35 @@
-dwarves-dfsg (1.12-3) UNRELEASED; urgency=medium
+dwarves-dfsg (1.15-1) unstable; urgency=medium
 
+  [ Theodore Y. Ts'o ]
+  * New upstream release (changes since 1.12, closes: #931142):
+    - Add support for BTF encoding which is a much more compact way
+      of encoding C type information.  It is derived from CTF (Compact
+      C-Type format) and is designed for use with eBPF.
+    - Add initial support for the DWARF DW_TAG_partial_unit
+    - Improve support for pretty-printing unions
+    - Teach pahole to show where a struct was used, via the -I option
+    - Use the running kernel by default when no file name is passed
+    - Improve man pages
+    - Support new BTF deduplication algorithm found the Linux kernel's
+      libbpf library, which allows type information for the kernel to
+      be stored in roughly 1% of the space.
+    - Add a new utility, btfdiff, which compares the pretty-printed
+      type information between two kernel images.
+    - Teach pahole to use the BTF information to pretty print structures
+      using the BTF information using "pahole -F btf", which is much faster
+      than using the Dwarf information.
+    - Infer the __packed__ attribute for structures without alignment holes
+      and which violate the natural types' alignment requirements.
+    - Support DWARF5's DW_AT_alignment tag
+    - Add a --compile option to pfunct which produces compileable
+      output for function prototypes in an object file.
+    - Miscellaneous bug fixes
+
+  [ Domenico Andreoli ]
   * Autopkgtest on libc-bin-dbgsym instead of dwarves-dbgsym. Closes: #923717.
   * Fix typo in description of no_shared_no_ebl.
 
- -- Domenico Andreoli <cavok@debian.org>  Mon, 11 Mar 2019 17:52:34 +0100
+ -- Domenico Andreoli <cavok@debian.org>  Tue, 30 Jul 2019 16:58:55 +0200
 
 dwarves-dfsg (1.12-2) unstable; urgency=medium
 
