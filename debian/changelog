@@ -1,6 +1,7 @@
 dwarves-dfsg (1.12-3) UNRELEASED; urgency=medium
 
   * Autopkgtest on libc-bin-dbgsym instead of dwarves-dbgsym. Closes: #923717.
+  * Fix typo in description of no_shared_no_ebl.
 
  -- Domenico Andreoli <cavok@debian.org>  Mon, 11 Mar 2019 17:52:34 +0100
 

@@ -4,7 +4,7 @@ Subject: no_shared_no_ebl
 
 Description: build static libs and remove ebl dependency
  
- Build static libraries instead of shared libaries so that we have a single
+ Build static libraries instead of shared libraries so that we have a single
  package.
  
  Do not try to find and link with libebl.so as it is no longer provided by
@@ -12,24 +12,24 @@ Description: build static libs and remove ebl dependency
 
 Origin: Thomas Girard <thomas.g.girard@free.fr>
 Forwarded: no
-Last-Update: 2012-06-07
+Last-Update: 2019-06-26
 ---
- CMakeLists.txt                | 15 +++------------
+ CMakeLists.txt                | 17 +++--------------
  cmake/modules/FindDWARF.cmake | 29 +++++++++++------------------
- 2 files changed, 14 insertions(+), 30 deletions(-)
+ 2 files changed, 14 insertions(+), 32 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bd80115..c9122fc 100644
+index 88a364f..17b96ff 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -36,19 +36,15 @@ _set_fancy(LIB_INSTALL_DIR "${EXEC_INSTALL_PREFIX}${CMAKE_INSTALL_PREFIX}/${__LI
+@@ -81,19 +81,15 @@ target_include_directories(bpf PRIVATE
  set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
- 		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c libbtf.c
+ 		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c btf_loader.c libbtf.c
  		     dwarf_loader.c dutil.c elf_symtab.c rbtree.c)
--add_library(dwarves SHARED ${dwarves_LIB_SRCS})
+-add_library(dwarves SHARED ${dwarves_LIB_SRCS} $<TARGET_OBJECTS:bpf>)
 -set_target_properties(dwarves PROPERTIES VERSION 1.0.0 SOVERSION 1)
 -set_target_properties(dwarves PROPERTIES INTERFACE_LINK_LIBRARIES "")
-+add_library(dwarves STATIC ${dwarves_LIB_SRCS})
++add_library(dwarves STATIC ${dwarves_LIB_SRCS} $<TARGET_OBJECTS:bpf>)
  target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES})
  
  set(dwarves_emit_LIB_SRCS dwarves_emit.c)
@@ -45,7 +45,7 @@ index bd80115..c9122fc 100644
  target_link_libraries(dwarves_reorganize dwarves)
  
  set(codiff_SRCS codiff.c)
-@@ -94,11 +90,6 @@ target_link_libraries(syscse dwarves)
+@@ -139,13 +135,6 @@ target_link_libraries(syscse dwarves)
  install(TARGETS codiff ctracer dtagnames pahole pdwtags
  		pfunct pglobal prefcnt scncopy syscse RUNTIME DESTINATION
  		${CMAKE_INSTALL_PREFIX}/bin)
@@ -53,10 +53,12 @@ index bd80115..c9122fc 100644
 -install(TARGETS dwarves dwarves_emit dwarves_reorganize LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 -install(FILES dwarves.h dwarves_emit.h dwarves_reorganize.h
 -	      dutil.h gobuffer.h list.h rbtree.h strings.h
+-	      btf_encoder.h config.h ctf_encoder.h ctf.h
+-	      elfcreator.h elf_symtab.h hash.h libbtf.h libctf.h
 -	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/dwarves/)
  install(FILES man-pages/pahole.1 DESTINATION ${CMAKE_INSTALL_PREFIX}/share/man/man1/)
  install(PROGRAMS ostra/ostra-cg DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
- install(FILES ostra/python/ostra.py DESTINATION ${CMAKE_INSTALL_PREFIX}/share/dwarves/runtime/python)
+ install(PROGRAMS btfdiff fullcircle DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
 diff --git a/cmake/modules/FindDWARF.cmake b/cmake/modules/FindDWARF.cmake
 index f4feec4..a9e409b 100644
 --- a/cmake/modules/FindDWARF.cmake
