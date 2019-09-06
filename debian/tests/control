@@ -1,2 +1,3 @@
-Test-Command: pahole /sbin/ldconfig
-Depends: dwarves, libc-bin-dbgsym
+Test-Command: pahole /usr/bin/pahole
+Depends: dwarves-dbgsym
+Restrictions: skip-not-installable
