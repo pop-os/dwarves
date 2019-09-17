@@ -1,5 +1,5 @@
 Source: dwarves-dfsg
-Priority: extra
+Priority: optional
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
 Build-Depends: debhelper (>= 10), cmake (>= 2.4.8), zlib1g-dev, libelf-dev, libdw-dev (>= 0.141)
