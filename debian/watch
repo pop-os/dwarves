@@ -1,3 +1,4 @@
-version=3
+version=4
 
-https://fedorapeople.org/~acme/dwarves/dwarves-(.*)\.tar\.bz2
+opts="decompress,pgpsigurlmangle=s%@ARCHIVE_EXT@$%.tar.sign%" \
+	https://fedorapeople.org/~acme/dwarves/dwarves-(.*)\.tar\.xz
