@@ -1,4 +1,4 @@
-dwarves-dfsg (1.15-2) UNRELEASED; urgency=medium
+dwarves-dfsg (1.15-2) unstable; urgency=low
 
   * Fix hardening-no-bindnow.
   * Fix debian-watch-uses-insecure-uri.
@@ -7,7 +7,7 @@ dwarves-dfsg (1.15-2) UNRELEASED; urgency=medium
   * Revert to dwarves-dbgsym for tests execution but skip the test if
     it's not installable (i.e. on transition to testing).
 
- -- Domenico Andreoli <cavok@debian.org>  Fri, 06 Sep 2019 18:02:47 +0200
+ -- Domenico Andreoli <cavok@debian.org>  Mon, 23 Sep 2019 18:21:35 +0200
 
 dwarves-dfsg (1.15-1) unstable; urgency=medium
 
