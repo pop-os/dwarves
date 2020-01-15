@@ -19,10 +19,10 @@ Last-Update: 2019-06-26
  2 files changed, 14 insertions(+), 32 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 88a364f..17b96ff 100644
+index 4d23dbe..2941df5 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -81,19 +81,15 @@ target_include_directories(bpf PRIVATE
+@@ -84,21 +84,17 @@ target_include_directories(bpf PRIVATE
  set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
  		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c btf_loader.c libbtf.c
  		     dwarf_loader.c dutil.c elf_symtab.c rbtree.c)
@@ -30,6 +30,8 @@ index 88a364f..17b96ff 100644
 -set_target_properties(dwarves PROPERTIES VERSION 1.0.0 SOVERSION 1)
 -set_target_properties(dwarves PROPERTIES INTERFACE_LINK_LIBRARIES "")
 +add_library(dwarves STATIC ${dwarves_LIB_SRCS} $<TARGET_OBJECTS:bpf>)
+ target_include_directories(dwarves PRIVATE
+ 			   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
  target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES})
  
  set(dwarves_emit_LIB_SRCS dwarves_emit.c)
@@ -45,7 +47,7 @@ index 88a364f..17b96ff 100644
  target_link_libraries(dwarves_reorganize dwarves)
  
  set(codiff_SRCS codiff.c)
-@@ -139,13 +135,6 @@ target_link_libraries(syscse dwarves)
+@@ -144,13 +140,6 @@ target_link_libraries(syscse dwarves)
  install(TARGETS codiff ctracer dtagnames pahole pdwtags
  		pfunct pglobal prefcnt scncopy syscse RUNTIME DESTINATION
  		${CMAKE_INSTALL_PREFIX}/bin)
