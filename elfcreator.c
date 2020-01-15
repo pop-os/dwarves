@@ -54,7 +54,6 @@ static void clear(ElfCreator *ctor, int do_unlink)
 ElfCreator *elfcreator_begin(char *path, Elf *elf) {
 	ElfCreator *ctor = NULL;
 	GElf_Ehdr ehdr_mem, *ehdr;
-	GElf_Half machine;
 
 	if (!(ctor = calloc(1, sizeof(*ctor))))
 		return NULL;
@@ -65,7 +64,6 @@ ElfCreator *elfcreator_begin(char *path, Elf *elf) {
 	ctor->oldelf = elf;
 
 	ehdr = gelf_getehdr(elf, &ehdr_mem);
-	machine = ehdr->e_machine;
 
 	if ((ctor->fd = open(path, O_RDWR|O_CREAT|O_TRUNC, 0755)) < 0) {
 err:
@@ -185,7 +183,7 @@ static void generic_dyn_fixup_fn(ElfCreator *ctor, Elf64_Sxword d_tag, Elf_Scn *
 {
 	GElf_Shdr *shdr, shdr_mem;
 	GElf_Dyn *dyn, dyn_mem;
-	size_t idx;
+	size_t idx = 0;
 
 	dyn = get_dyn_by_tag(ctor, d_tag, &dyn_mem, &idx);
 	shdr = gelf_getshdr(scn, &shdr_mem);
@@ -201,7 +199,7 @@ static void rela_dyn_fixup_fn(ElfCreator *ctor, Elf64_Sxword d_tag, Elf_Scn *scn
 {
 	GElf_Shdr *shdr, shdr_mem;
 	GElf_Dyn *dyn, dyn_mem;
-	size_t idx;
+	size_t idx = 0;
 
 	dyn = get_dyn_by_tag(ctor, d_tag, &dyn_mem, &idx);
 	shdr = gelf_getshdr(scn, &shdr_mem);
@@ -222,7 +220,7 @@ static void rel_dyn_fixup_fn(ElfCreator *ctor, Elf64_Sxword d_tag, Elf_Scn *scn)
 {
 	GElf_Shdr *shdr, shdr_mem;
 	GElf_Dyn *dyn, dyn_mem;
-	size_t idx;
+	size_t idx = 0;
 
 	dyn = get_dyn_by_tag(ctor, d_tag, &dyn_mem, &idx);
 	shdr = gelf_getshdr(scn, &shdr_mem);

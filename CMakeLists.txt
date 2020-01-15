@@ -27,7 +27,10 @@ if (NOT CMAKE_BUILD_TYPE)
 	     FORCE)
 endif (NOT CMAKE_BUILD_TYPE)
 
-add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.15")
+set(CMAKE_C_FLAGS_DEBUG "-Wall -Werror -ggdb -O2")
+set(CMAKE_C_FLAGS_RELEASE "-Wall -O2")
+
+add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.16")
 find_package(DWARF REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -84,6 +87,8 @@ set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
 add_library(dwarves SHARED ${dwarves_LIB_SRCS} $<TARGET_OBJECTS:bpf>)
 set_target_properties(dwarves PROPERTIES VERSION 1.0.0 SOVERSION 1)
 set_target_properties(dwarves PROPERTIES INTERFACE_LINK_LIBRARIES "")
+target_include_directories(dwarves PRIVATE
+			   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
 target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES})
 
 set(dwarves_emit_LIB_SRCS dwarves_emit.c)

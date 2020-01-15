@@ -331,7 +331,7 @@ reevaluate:
 		case DW_TAG_rvalue_reference_type:
 		case DW_TAG_volatile_type: {
 			struct tag *tag = cu__type(cu, type->type);
-			if (type == NULL) {
+			if (tag == NULL) {
 				tag__id_not_found_fprintf(stderr, type->type);
 				continue;
 			}
@@ -420,12 +420,17 @@ static int ptr_table__add_with_id(struct ptr_table *pt, void *ptr,
 		if (entries == NULL)
 			return -ENOMEM;
 
+		/* Zero out the new range */
+		memset(entries + pt->allocated_entries * sizeof(void *), 0,
+		       (allocated_entries - pt->allocated_entries) * sizeof(void *));
+
 		pt->allocated_entries = allocated_entries;
 		pt->entries = entries;
 	}
 
 	pt->entries[id] = ptr;
-	++pt->nr_entries;
+	if (id >= pt->nr_entries)
+		pt->nr_entries = id + 1;
 	return 0;
 }
 
@@ -1119,6 +1124,13 @@ int ftype__has_parm_of_type(const struct ftype *ftype, const type_id_t target,
 {
 	struct parameter *pos;
 
+	if (ftype->tag.tag == DW_TAG_subprogram) {
+		struct function *func = (struct function *)ftype;
+
+		if (func->btf)
+			ftype = tag__ftype(cu__type(cu, ftype->tag.type));
+	}
+
 	ftype__for_each_parameter(ftype, pos) {
 		struct tag *type = cu__type(cu, pos->tag.type);
 
@@ -1335,6 +1347,7 @@ static size_t type__natural_alignment(struct type *type, const struct cu *cu)
 		if (member->tag.tag == DW_TAG_inheritance &&
 		    member->virtuality == DW_VIRTUALITY_virtual)
 			continue;
+		if (member->is_static) continue;
 
 		struct tag *member_type = tag__strip_typedefs_and_modifiers(&member->tag, cu);
 		size_t member_natural_alignment = tag__natural_alignment(member_type, cu);
@@ -1377,7 +1390,7 @@ void type__check_structs_at_unnatural_alignments(struct type *type, const struct
 bool class__infer_packed_attributes(struct class *cls, const struct cu *cu)
 {
 	struct type *ctype = &cls->type;
-	struct class_member *pos, *last = NULL;
+	struct class_member *pos;
 	uint16_t max_natural_alignment = 1;
 
 	if (!tag__is_struct(class__tag(cls)))
@@ -1740,7 +1753,7 @@ int cus__load_file(struct cus *cus, struct conf_load *conf,
 	}
 
 	while (debug_fmt_table[i] != NULL) {
-		if (conf->conf_fprintf)
+		if (conf && conf->conf_fprintf)
 			conf->conf_fprintf->has_alignment_info = debug_fmt_table[i]->has_alignment_info;
 		if (debug_fmt_table[i]->load_file(cus, conf, filename) == 0)
 			return 0;
@@ -1983,25 +1996,6 @@ static int filename__sprintf_build_id(const char *pathname, char *sbuild_id)
 		return -EINVAL;
 
 	return build_id__sprintf(build_id, sizeof(build_id), sbuild_id);
-}
-
-/* asnprintf consolidates asprintf and snprintf */
-static int asnprintf(char **strp, size_t size, const char *fmt, ...)
-{
-	va_list ap;
-	int ret;
-
-	if (!strp)
-		return -EINVAL;
-
-	va_start(ap, fmt);
-	if (*strp)
-		ret = vsnprintf(*strp, size, fmt, ap);
-	else
-		ret = vasprintf(strp, fmt, ap);
-	va_end(ap);
-
-	return ret;
 }
 
 #define zfree(ptr) ({ free(*ptr); *ptr = NULL; })
