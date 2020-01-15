@@ -1,3 +1,22 @@
+dwarves-dfsg (1.16-1) unstable; urgency=low
+
+  * New upstream release (changes since 1.15):
+    - Preserve and encode exported functions as BTF_KIND_FUNC
+    - Add support for BTF_KIND_FUNC
+    - Account inline type __aligned__ member types for spacing
+    - Fix alignment of class members that are structs/enums/unions
+    - Fixup handling classes with no members, solving a NULL deref
+    - Avoid infinite loop trying to determine type with static data
+      member of its own type.
+    - type->type == 0 is void, fix --compile for that
+    - Print DW_TAG_subroutine_type as well
+    - Fix ptr_table__add_with_id() handling of pt->nr_entries, covering
+      how BTF variables IDs are encoded
+    - Allow passing the format path specifier, to use with BTF
+    - Fixup issues pointed out by various coverity reports
+
+ -- Domenico Andreoli <cavok@debian.org>  Wed, 15 Jan 2020 18:02:11 +0100
+
 dwarves-dfsg (1.15-2) unstable; urgency=low
 
   * Fix hardening-no-bindnow.
