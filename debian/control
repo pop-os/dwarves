@@ -3,7 +3,8 @@ Priority: optional
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
 Build-Depends: debhelper (>= 10), cmake (>= 2.4.8), zlib1g-dev, libelf-dev, libdw-dev (>= 0.141)
-Standards-Version: 3.9.3
+Standards-Version: 4.5.0
+Rules-Requires-Root: no
 Section: utils
 Vcs-Browser: https://salsa.debian.org/debian/dwarves
 Vcs-Git: https://salsa.debian.org/debian/dwarves.git

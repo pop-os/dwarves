@@ -16,8 +16,3 @@ override_dh_auto_install-arch:
 	# remove them for now, will be included in a next upload
 	# (requires python and matplotlib)
 	rm -Rf debian/tmp/usr/share/dwarves/runtime/python debian/tmp/usr/bin/ostra-cg
-
-get-orig-source:
-	sh debian/get-orig.sh
-
-.PHONY: get-orig-source

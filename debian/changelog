@@ -1,3 +1,11 @@
+dwarves-dfsg (1.16-2) unstable; urgency=low
+
+  * Update to Standards-Version 4.5.0:
+    - Drop get-orig-source rules target
+    - Add Rules-Requires-Root: no
+
+ -- Domenico Andreoli <cavok@debian.org>  Mon, 27 Jan 2020 09:56:51 +0100
+
 dwarves-dfsg (1.16-1) unstable; urgency=low
 
   * New upstream release (changes since 1.15):
