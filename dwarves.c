@@ -732,6 +732,37 @@ found:
 
 }
 
+struct tag *cu__find_type_by_name(const struct cu *cu, const char *name, const int include_decls, type_id_t *idp)
+{
+	if (cu == NULL || name == NULL)
+		return NULL;
+
+	uint32_t id;
+	struct tag *pos;
+	cu__for_each_type(cu, id, pos) {
+		struct type *type;
+
+		if (!tag__is_type(pos))
+			continue;
+
+		type = tag__type(pos);
+		const char *tname = type__name(type, cu);
+		if (tname && strcmp(tname, name) == 0) {
+			if (!type->declaration)
+				goto found;
+
+			if (include_decls)
+				goto found;
+		}
+	}
+
+	return NULL;
+found:
+	if (idp != NULL)
+		*idp = id;
+	return pos;
+}
+
 static struct tag *__cu__find_struct_by_name(const struct cu *cu, const char *name,
 					     const int include_decls, bool unions, type_id_t *idp)
 {
@@ -1574,6 +1605,9 @@ static int list__for_all_tags(struct list_head *list, struct cu *cu,
 {
 	struct tag *pos, *n;
 
+	if (list_empty(list) || !list->next)
+		return 0;
+
 	list_for_each_entry_safe_reverse(pos, n, list, node) {
 		if (tag__has_namespace(pos)) {
 			struct namespace *space = tag__namespace(pos);
@@ -1660,8 +1694,8 @@ int cus__load_dir(struct cus *cus, struct conf_load *conf,
 		    strcmp(entry->d_name, "..") == 0)
 		    continue;
 
-		snprintf(pathname, sizeof(pathname), "%s/%s",
-			 dirname, entry->d_name);
+		snprintf(pathname, sizeof(pathname), "%.*s/%s",
+			 (int)(sizeof(pathname) - sizeof(entry->d_name) - 1), dirname, entry->d_name);
 
 		err = lstat(pathname, &st);
 		if (err != 0)
@@ -1696,8 +1730,8 @@ extern struct debug_fmt_ops dwarf__ops, ctf__ops, btf_elf__ops;
 
 static struct debug_fmt_ops *debug_fmt_table[] = {
 	&dwarf__ops,
-	&ctf__ops,
 	&btf_elf__ops,
+	&ctf__ops,
 	NULL,
 };
 
@@ -2074,6 +2108,19 @@ static int cus__load_running_kernel(struct cus *cus, struct conf_load *conf)
 	int i, err = 0;
 	char running_sbuild_id[SBUILD_ID_SIZE];
 
+	if ((!conf || conf->format_path == NULL || strncmp(conf->format_path, "btf", 3) == 0) &&
+	    access("/sys/kernel/btf/vmlinux", R_OK) == 0) {
+		int loader = debugging_formats__loader("btf");
+		if (loader == -1)
+			goto try_elf;
+
+		if (conf && conf->conf_fprintf)
+			conf->conf_fprintf->has_alignment_info = debug_fmt_table[loader]->has_alignment_info;
+
+		if (debug_fmt_table[loader]->load_file(cus, conf, "/sys/kernel/btf/vmlinux") == 0)
+			return 0;
+	}
+try_elf:
 	elf_version(EV_CURRENT);
 	vmlinux_path__init();
 

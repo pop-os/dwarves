@@ -53,6 +53,8 @@ static uint8_t find_pointers_in_structs;
 static int reorganize;
 static bool show_private_classes;
 static bool defined_in;
+static bool just_unions;
+static bool just_structs;
 static int show_reorg_steps;
 static char *class_name;
 static struct strlist *class_names;
@@ -173,7 +175,7 @@ static void size_formatter(struct class *class,
 			   struct cu *cu, uint32_t id __unused)
 {
 	printf("%s%c%d%c%u\n", class__name(class, cu), separator,
-	       class__size(class), separator, class->nr_holes);
+	       class__size(class), separator, tag__is_union(class__tag(class)) ? 0 : class->nr_holes);
 }
 
 static void class_name_len_formatter(struct class *class, struct cu *cu,
@@ -359,6 +361,12 @@ static struct class *class__filter(struct class *class, struct cu *cu,
 	struct tag *tag = class__tag(class);
 	const char *name;
 
+	if (just_unions && !tag__is_union(tag))
+		return NULL;
+
+	if (just_structs && !tag__is_struct(tag))
+		return NULL;
+
 	if (!tag->top_level) {
 		class__find_holes(class);
 
@@ -410,12 +418,19 @@ static struct class *class__filter(struct class *class, struct cu *cu,
 		     decl_exclude_prefix_len) == 0))
 		return NULL;
 	/*
+	 * if --unions was used and we got here, its a union and we satisfy the other
+	 * filters/options, so don't filter it.
+	 */
+	if (just_unions)
+		return class;
+	/*
 	 * The following only make sense for structs, i.e. 'struct class',
 	 * and as we can get here with a union, that is represented by a 'struct type',
-	 * bail out if we get here with an union
+	 * bail out if we get here with an union and we are not looking for things
+	 * that need finding holes, like --packable, --nr_holes, etc
 	 */
-	if (!tag__is_struct(class__tag(class)))
-		return show_packable ? NULL : class;
+	if (!tag__is_struct(tag))
+		return (just_structs || show_packable || nr_holes || nr_bit_holes || hole_size_ge) ? NULL : class;
 
 	if (tag->top_level)
 		class__find_holes(class);
@@ -624,7 +639,8 @@ static void cu__account_nr_methods(struct cu *cu)
 
 	cu__for_each_function(cu, id, pos_function) {
 		struct class_member *pos;
-		list_for_each_entry(pos, &pos_function->proto.parms, tag.node) {
+
+		function__for_each_parameter(pos_function, cu, pos) {
 			struct tag *type = cu__type(cu, pos->tag.type);
 
 			if (type == NULL || !tag__is_pointer(type))
@@ -661,17 +677,26 @@ static void cu__account_nr_methods(struct cu *cu)
 
 static char tab[128];
 
-static void print_structs_with_pointer_to(const struct cu *cu, uint32_t type)
+static void print_structs_with_pointer_to(struct cu *cu, uint32_t type)
 {
 	struct class *pos;
 	struct class_member *pos_member;
 	uint32_t id;
 
-	cu__for_each_struct(cu, id, pos) {
+	cu__for_each_struct_or_union(cu, id, pos) {
 		bool looked = false;
-		struct structure *str;
+		/*
+		 * Set it to NULL just to silence the compiler, as the printf
+		 * at the end of the type__for_each_member() loop is only reached
+		 * after str _is_ set, as looked starts as false, str is used with
+		 * structures_add and if it is NULL, we return.
+		 */
+		struct structure *str = NULL;
 
 		if (pos->type.namespace.name == 0)
+			continue;
+
+		if (!class__filter(pos, cu, id))
 			continue;
 
 		type__for_each_member(&pos->type, pos_member) {
@@ -704,41 +729,60 @@ static void print_structs_with_pointer_to(const struct cu *cu, uint32_t type)
 	}
 }
 
-static void print_containers(const struct cu *cu, uint32_t type, int ident)
+static int type__print_containers(struct type *type, struct cu *cu, uint32_t contained_type_id, int ident)
+{
+	const uint32_t n = type__nr_members_of_type(type, contained_type_id);
+	if (n == 0)
+		return 0;
+
+	if (ident == 0) {
+		bool existing_entry;
+		struct structure *str = structures__add(type__class(type), cu, &existing_entry);
+		if (str == NULL) {
+			fprintf(stderr, "pahole: insufficient memory for "
+				"processing %s, skipping it...\n",
+				cu->name);
+			return -1;
+		}
+		/*
+		 * We already printed this struct in another CU
+		 */
+		if (existing_entry)
+			return 0;
+	}
+
+	printf("%.*s%s", ident * 2, tab, type__name(type, cu));
+	if (global_verbose)
+		printf(": %u", n);
+	putchar('\n');
+	if (recursive) {
+		struct class_member *member;
+
+		type__for_each_member(type, member) {
+			struct tag *member_type = cu__type(cu, member->tag.type);
+
+			if (tag__is_struct(member_type) || tag__is_union(member_type))
+				type__print_containers(tag__type(member_type), cu, contained_type_id, ident + 1);
+		}
+	}
+
+	return 0;
+}
+
+static void print_containers(struct cu *cu, uint32_t type, int ident)
 {
 	struct class *pos;
 	uint32_t id;
 
-	cu__for_each_struct(cu, id, pos) {
+	cu__for_each_struct_or_union(cu, id, pos) {
 		if (pos->type.namespace.name == 0)
 			continue;
 
-		const uint32_t n = type__nr_members_of_type(&pos->type, type);
-		if (n == 0)
+		if (!class__filter(pos, cu, id))
 			continue;
 
-		if (ident == 0) {
-			bool existing_entry;
-			struct structure *str = structures__add(pos, cu, &existing_entry);
-			if (str == NULL) {
-				fprintf(stderr, "pahole: insufficient memory for "
-					"processing %s, skipping it...\n",
-					cu->name);
-				return;
-			}
-			/*
-			 * We already printed this struct in another CU
-			 */
-			if (existing_entry)
-				break;
-		}
-
-		printf("%.*s%s", ident * 2, tab, class__name(pos, cu));
-		if (global_verbose)
-			printf(": %u", n);
-		putchar('\n');
-		if (recursive)
-			print_containers(cu, id, ident + 1);
+		if (type__print_containers(&pos->type, cu, type, ident))
+			break;
 	}
 }
 
@@ -754,6 +798,8 @@ ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 #define ARGP_suppress_aligned_attribute	306
 #define ARGP_suppress_force_paddings	307
 #define ARGP_suppress_packed	   308
+#define ARGP_just_unions	   309
+#define ARGP_just_structs	   310
 
 static const struct argp_option pahole__options[] = {
 	{
@@ -997,6 +1043,16 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "Encode as BTF",
 	},
 	{
+		.name = "structs",
+		.key  = ARGP_just_structs,
+		.doc  = "Show just structs",
+	},
+	{
+		.name = "unions",
+		.key  = ARGP_just_unions,
+		.doc  = "Show just unions",
+	},
+	{
 		.name = NULL,
 	}
 };
@@ -1083,6 +1139,10 @@ static error_t pahole__options_parser(int key, char *arg,
 		conf.classes_as_structs = 1;		break;
 	case ARGP_hex_fmt:
 		conf.hex_fmt = 1;			break;
+	case ARGP_just_unions:
+		just_unions = true;			break;
+	case ARGP_just_structs:
+		just_structs = true;			break;
 	default:
 		return ARGP_ERR_UNKNOWN;
 	}
@@ -1169,8 +1229,6 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		if (word_size != 0)
 			cu_fixup_word_size_iterator(cu);
 
-		memset(tab, ' ', sizeof(tab) - 1);
-
 		print_classes(cu);
 		goto dump_it;
 	}
@@ -1185,9 +1243,15 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		static type_id_t class_id;
 		bool include_decls = find_pointers_in_structs != 0 ||
 				     stats_formatter == nr_methods_formatter;
-		struct tag *class = cu__find_struct_or_union_by_name(cu, pos->s, include_decls, &class_id);
-		if (class == NULL)
-			continue;
+		struct tag *class = cu__find_type_by_name(cu, pos->s, include_decls, &class_id);
+		if (class == NULL) {
+			class = cu__find_base_type_by_name(cu, pos->s, &class_id);
+			if (class == NULL) {
+				if (strcmp(pos->s, "void"))
+					continue;
+				class_id = 0;
+			}
+		}
 
 		if (defined_in) {
 			puts(cu->name);
@@ -1199,15 +1263,16 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		 */
 		strlist__remove(class_names, pos);
 
-		class__find_holes(tag__class(class));
+		if (class)
+			class__find_holes(tag__class(class));
 		if (reorganize) {
-			if (tag__is_struct(class))
+			if (class && tag__is_struct(class))
 				do_reorg(class, cu);
 		} else if (find_containers)
 			print_containers(cu, class_id, 0);
 		else if (find_pointers_in_structs)
 			print_structs_with_pointer_to(cu, class_id);
-		else {
+		else if (class) {
 			/*
 			 * We don't need to print it for every compile unit
 			 * but the previous options need
@@ -1267,8 +1332,7 @@ int main(int argc, char *argv[])
 {
 	int err, remaining, rc = EXIT_FAILURE;
 
-	if (argp_parse(&pahole__argp, argc, argv, 0, &remaining, NULL) ||
-	    (remaining == argc && class_name == NULL)) {
+	if (argp_parse(&pahole__argp, argc, argv, 0, &remaining, NULL)) {
 		argp_help(&pahole__argp, stderr, ARGP_HELP_SEE, argv[0]);
 		goto out;
 	}
@@ -1280,19 +1344,27 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	if (class_name && populate_class_names())
-		goto out_dwarves_exit;
-
 	struct cus *cus = cus__new();
 	if (cus == NULL) {
 		fputs("pahole: insufficient memory\n", stderr);
 		goto out_dwarves_exit;
 	}
 
+	memset(tab, ' ', sizeof(tab) - 1);
+
 	conf_load.steal = pahole_stealer;
+
+try_sole_arg_as_class_names:
+	if (class_name && populate_class_names())
+		goto out_dwarves_exit;
 
 	err = cus__load_files(cus, &conf_load, argv + remaining);
 	if (err != 0) {
+		if (class_name == NULL) {
+			class_name = argv[remaining];
+			remaining = argc;
+			goto try_sole_arg_as_class_names;
+		}
 		cus__fprintf_load_files_err(cus, "pahole", argv + remaining, err, stderr);
 		goto out_cus_delete;
 	}
