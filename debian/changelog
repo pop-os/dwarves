@@ -5,6 +5,7 @@ dwarves-dfsg (1.17-1) unstable; urgency=low
   * Update to Standards-Version 4.5.0:
     - Drop get-orig-source rules target
     - Add Rules-Requires-Root: no
+  * Update debhelper compat to 12.
 
  -- Domenico Andreoli <cavok@debian.org>  Tue, 24 Mar 2020 20:44:07 +0100
 
