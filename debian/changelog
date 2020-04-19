@@ -1,13 +1,33 @@
 dwarves-dfsg (1.17-1) unstable; urgency=low
 
   * New upstream release (changes since 1.16):
-    ...
+
+    BTF loader:
+     - Support raw BTF as available in /sys/kernel/btf/vmlinux.
+
+    pahole:
+     - When the sole argument passed isn't a file, take it as a class name:
+     - Do not require a class name to operate without a file name.
+     - Make --find_pointers_to consider unions:
+     - Make --contains and --find_pointers_to honour --unions
+     - Add support for finding pointers to void:
+     - Make --contains and --find_pointers_to to work with base types:
+     - Make --contains look for more than just unions, structs:
+     - Consider unions when looking for classes containing some class:
+     - Introduce --unions to consider just unions:
+     - Fix -m/--nr_methods - Number of functions operating on a type pointer
+
+    man-pages:
+     - Add section about --hex + -E to locate offsets deep into sub structs.
+     - Add more information about BTF.
+     - Add some examples.
+
   * Update to Standards-Version 4.5.0:
     - Drop get-orig-source rules target
     - Add Rules-Requires-Root: no
   * Update debhelper compat to 12.
 
- -- Domenico Andreoli <cavok@debian.org>  Tue, 24 Mar 2020 20:44:07 +0100
+ -- Domenico Andreoli <cavok@debian.org>  Sun, 19 Apr 2020 20:25:33 +0200
 
 dwarves-dfsg (1.16-1) unstable; urgency=low
 
