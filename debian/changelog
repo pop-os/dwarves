@@ -12,6 +12,7 @@ dwarves-dfsg (1.18-1) unstable; urgency=medium
     - Bail out on partial units for now, avoiding segfaults and providing
       warning to user, hopefully will be addressed in v1.19.
       Closes: #977715.
+  * Update Homepage link. Closes: #978708.
 
   [ Luca Boccassi ]
   * Use packaged libbpf instead of the statically linked. Closes: #979105.
