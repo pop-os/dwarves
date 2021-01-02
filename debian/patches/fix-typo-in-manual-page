@@ -1,0 +1,20 @@
+Description: Fix typo in the pahole manual page
+Forwarded: https://github.com/acmel/dwarves/pull/17
+
+---
+ man-pages/pahole.1 |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: b/man-pages/pahole.1
+===================================================================
+--- a/man-pages/pahole.1
++++ b/man-pages/pahole.1
+@@ -721,7 +721,7 @@ $ pahole ~/bin/perf --header=perf_file_h
+ .P
+ This uses ~/bin/perf to get the type definitions, the defines 'struct perf_file_header' as the header,
+ then seeks '$header.data.offset' bytes from the start of the file, and considers '$header.data.size' bytes
+-worth of such records. The filter expression may omit a common prefix, in this case it could additonally be
++worth of such records. The filter expression may omit a common prefix, in this case it could additionally be
+ equivalently written as both 'filter=type==CGROUP' or the 'filter=' can also be omitted, getting as compact
+ as 'type==CGROUP':
+ .P
