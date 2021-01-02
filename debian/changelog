@@ -13,6 +13,7 @@ dwarves-dfsg (1.18-1) unstable; urgency=medium
       warning to user, hopefully will be addressed in v1.19.
       Closes: #977715.
   * Update Homepage link. Closes: #978708.
+  * Drop debian/compat in favor of Build-Depends: debhelper-compat.
 
   [ Luca Boccassi ]
   * Use packaged libbpf instead of the statically linked. Closes: #979105.
