@@ -1,0 +1,116 @@
+Author: Luca Boccassi <bluca@debian.org>
+Description: libbpf: allow one to use packaged version
+ Add a new CMake option, LIBBPF_EMBEDDED, to switch between the
+ embedded version and the system version (searched via pkg-config)
+ of libbpf. Set the system version as the default.
+Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2,6 +2,19 @@
+ cmake_minimum_required(VERSION 2.8.8)
+ cmake_policy(SET CMP0005 NEW)
+ 
++option(LIBBPF_EMBEDDED "Use the embedded version of libbpf instead of searching it via pkg-config" OFF)
++if (NOT LIBBPF_EMBEDDED)
++	find_package(PkgConfig)
++	if(PKGCONFIG_FOUND)
++		pkg_check_modules(LIBBPF libbpf>=0.2.0)
++	endif()
++endif()
++
++if(LIBBPF_FOUND)
++	INCLUDE_DIRECTORIES(${LIBBPF_INCLUDE_DIRS})
++	LINK_DIRECTORIES(${LIBBPF_LIBRARY_DIRS})
++	ADD_DEFINITIONS(-DLIBBPF_FOUND)
++endif()
+ INCLUDE_DIRECTORIES( ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} )
+ 
+ # Try to parse this later, Helio just showed me a KDE4 example to support
+@@ -76,20 +89,29 @@
+ 
+ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64")
+ 
+-file(GLOB libbpf_sources "lib/bpf/src/*.c")
+-add_library(bpf OBJECT ${libbpf_sources})
+-set_property(TARGET bpf PROPERTY POSITION_INDEPENDENT_CODE 1)
+-target_include_directories(bpf PRIVATE
+-			   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include
+-			   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
++if (NOT LIBBPF_FOUND)
++	file(GLOB libbpf_sources "lib/bpf/src/*.c")
++	add_library(bpf OBJECT ${libbpf_sources})
++	set_property(TARGET bpf PROPERTY POSITION_INDEPENDENT_CODE 1)
++	target_include_directories(bpf PRIVATE
++				   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include
++				   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
++endif()
+ 
+ set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
+ 		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c btf_loader.c libbtf.c
+ 		     dwarf_loader.c dutil.c elf_symtab.c rbtree.c)
+-add_library(dwarves STATIC ${dwarves_LIB_SRCS} $<TARGET_OBJECTS:bpf>)
+-target_include_directories(dwarves PRIVATE
+-			   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
+-target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES})
++if (NOT LIBBPF_FOUND)
++	list(APPEND dwarves_LIB_SRCS $<TARGET_OBJECTS:bpf>)
++endif()
++add_library(dwarves STATIC ${dwarves_LIB_SRCS})
++if (NOT LIBBPF_FOUND)
++	target_include_directories(dwarves PRIVATE
++				   ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
++else()
++	target_include_directories(dwarves PRIVATE ${LIBBPF_INCLUDE_DIRS})
++endif()
++target_link_libraries(dwarves ${DWARF_LIBRARIES} ${ZLIB_LIBRARIES} ${LIBBPF_LIBRARIES})
+ 
+ set(dwarves_emit_LIB_SRCS dwarves_emit.c)
+ add_library(dwarves_emit STATIC ${dwarves_emit_LIB_SRCS})
+--- a/btf_encoder.c
++++ b/btf_encoder.c
+@@ -11,7 +11,11 @@
+ 
+ #include "dwarves.h"
+ #include "libbtf.h"
++#ifdef LIBBPF_FOUND
++#include <linux/btf.h>
++#else
+ #include "lib/bpf/include/uapi/linux/btf.h"
++#endif
+ #include "hash.h"
+ #include "elf_symtab.h"
+ #include "btf_encoder.h"
+--- a/btf_loader.c
++++ b/btf_loader.c
+@@ -25,7 +25,11 @@
+ #include <gelf.h>
+ 
+ #include "libbtf.h"
++#ifdef LIBBPF_FOUND
++#include <linux/btf.h>
++#else
+ #include "lib/bpf/include/uapi/linux/btf.h"
++#endif
+ #include "dutil.h"
+ #include "dwarves.h"
+ 
+--- a/libbtf.c
++++ b/libbtf.c
+@@ -18,10 +18,16 @@
+ #include <stdarg.h>
+ 
+ #include "libbtf.h"
++#ifdef LIBBPF_FOUND
++#include <linux/btf.h>
++#include <bpf/btf.h>
++#include <bpf/libbpf.h>
++#else
+ #include "lib/bpf/include/uapi/linux/btf.h"
+-#include "lib/bpf/include/linux/err.h"
+ #include "lib/bpf/src/btf.h"
+ #include "lib/bpf/src/libbpf.h"
++#endif
++#include "lib/bpf/include/linux/err.h"
+ #include "dutil.h"
+ #include "gobuffer.h"
+ #include "dwarves.h"

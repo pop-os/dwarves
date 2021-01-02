@@ -9,7 +9,7 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 	dh $@ --builddirectory=debian/build
 
 override_dh_auto_configure:
-	dh_auto_configure -- -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None"
+	dh_auto_configure -- -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE="None" -DLIBBPF_EMBEDDED=off
 
 override_dh_auto_install-arch:
 	$(MAKE) -C debian/build install DESTDIR=$(CURDIR)/debian/tmp
