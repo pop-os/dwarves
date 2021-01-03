@@ -16,6 +16,7 @@ dwarves-dfsg (1.18-1) unstable; urgency=medium
   * Drop debian/compat in favor of Build-Depends: debhelper-compat.
   * Fix typo in pahole manual page.
   * Fix escaping in pahole manual page.
+  * Fix debian/copyright lintian errors.
 
   [ Luca Boccassi ]
   * Use packaged libbpf instead of the statically linked. Closes: #979105.
