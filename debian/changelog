@@ -1,3 +1,23 @@
+dwarves-dfsg (1.18-1) unstable; urgency=medium
+
+  [ Domenico Andreoli ]
+  * New upstream release (changes since 1.17):
+    - Use type information to pretty print raw data from stdin, all
+      documented in the man pages, further information in the csets.
+    - Store percpu variables in vmlinux BTF. This can be disabled when
+      debugging kernel features being developed to use it.
+    - pahole now should be segfault free when handling gdb test suit
+      DWARF files, including ADA, FORTRAN, rust and dwp compressed files,
+      the later being just flatly refused, that got left for v1.19.
+    - Bail out on partial units for now, avoiding segfaults and providing
+      warning to user, hopefully will be addressed in v1.19.
+      Closes: #977715.
+
+  [ Luca Boccassi ]
+  * Use packaged libbpf instead of the statically linked. Closes: #979105.
+
+ -- Domenico Andreoli <cavok@debian.org>  Sun, 03 Jan 2021 13:41:31 +0100
+
 dwarves-dfsg (1.17-1) unstable; urgency=low
 
   * New upstream release (changes since 1.16):
