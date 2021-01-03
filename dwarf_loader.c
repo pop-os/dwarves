@@ -472,6 +472,20 @@ static struct array_type *array_type__new(Dwarf_Die *die, struct cu *cu)
 	return at;
 }
 
+static struct string_type *string_type__new(Dwarf_Die *die, struct cu *cu)
+{
+	struct string_type *st = tag__alloc(cu, sizeof(*st));
+
+	if (st != NULL) {
+		tag__init(&st->tag, cu, die);
+		st->nr_entries = attr_numeric(die, DW_AT_byte_size);
+		if (st->nr_entries == 0)
+			st->nr_entries = 1;
+	}
+
+	return st;
+}
+
 static void namespace__init(struct namespace *namespace, Dwarf_Die *die,
 			    struct cu *cu)
 {
@@ -496,7 +510,7 @@ static struct namespace *namespace__new(Dwarf_Die *die, struct cu *cu)
 static void type__init(struct type *type, Dwarf_Die *die, struct cu *cu)
 {
 	namespace__init(&type->namespace, die, cu);
-	INIT_LIST_HEAD(&type->node);
+	__type__init(type);
 	type->size		 = attr_numeric(die, DW_AT_byte_size);
 	type->alignment		 = attr_numeric(die, DW_AT_alignment);
 	type->declaration	 = attr_numeric(die, DW_AT_declaration);
@@ -576,7 +590,15 @@ const char *variable__scope_str(const struct variable *var)
 
 static struct variable *variable__new(Dwarf_Die *die, struct cu *cu)
 {
-	struct variable *var = tag__alloc(cu, sizeof(*var));
+	struct variable *var;
+	bool has_specification;
+
+	has_specification = dwarf_hasattr(die, DW_AT_specification);
+	if (has_specification) {
+		var = tag__alloc_with_spec(cu, sizeof(*var));
+	} else {
+		var = tag__alloc(cu, sizeof(*var));
+	}
 
 	if (var != NULL) {
 		tag__init(&var->ip.tag, cu, die);
@@ -589,6 +611,10 @@ static struct variable *variable__new(Dwarf_Die *die, struct cu *cu)
 		var->ip.addr = 0;
 		if (!var->declaration && cu->has_addr_info)
 			var->scope = dwarf__location(die, &var->ip.addr, &var->location);
+		if (has_specification) {
+			dwarf_tag__set_spec(var->ip.tag.priv,
+					    attr_type(die, DW_AT_specification));
+		}
 	}
 
 	return var;
@@ -1127,6 +1153,16 @@ out_free:
 	return NULL;
 }
 
+static struct tag *die__create_new_string_type(Dwarf_Die *die, struct cu *cu)
+{
+	struct string_type *string = string_type__new(die, cu);
+
+	if (string == NULL)
+		return NULL;
+
+	return &string->tag;
+}
+
 static struct tag *die__create_new_parameter(Dwarf_Die *die,
 					     struct ftype *ftype,
 					     struct lexblock *lexblock,
@@ -1193,6 +1229,9 @@ static struct tag *die__create_new_subroutine_type(Dwarf_Die *die,
 		uint32_t id;
 
 		switch (dwarf_tag(die)) {
+		case DW_TAG_subrange_type: // ADA stuff
+			tag__print_not_supported(dwarf_tag(die));
+			continue;
 		case DW_TAG_formal_parameter:
 			tag = die__create_new_parameter(die, ftype, NULL, cu);
 			break;
@@ -1203,6 +1242,11 @@ static struct tag *die__create_new_subroutine_type(Dwarf_Die *die,
 			tag = die__process_tag(die, cu, 0);
 			if (tag == NULL)
 				goto out_delete;
+
+			if (tag == &unsupported_tag) {
+				tag__print_not_supported(dwarf_tag(die));
+				continue;
+			}
 
 			if (cu__add_tag(cu, tag, &id) < 0)
 				goto out_delete_tag;
@@ -1276,6 +1320,8 @@ static int die__process_class(Dwarf_Die *die, struct type *class,
 
 	do {
 		switch (dwarf_tag(die)) {
+		case DW_TAG_subrange_type: // XXX: ADA stuff, its a type tho, will have other entries referencing it...
+		case DW_TAG_variant_part: // XXX: Rust stuff
 #ifdef STB_GNU_UNIQUE
 		case DW_TAG_GNU_formal_parameter_pack:
 		case DW_TAG_GNU_template_parameter_pack:
@@ -1321,6 +1367,11 @@ static int die__process_class(Dwarf_Die *die, struct type *class,
 			if (tag == NULL)
 				return -ENOMEM;
 
+			if (tag == &unsupported_tag) {
+				tag__print_not_supported(dwarf_tag(die));
+				continue;
+			}
+
 			uint32_t id;
 
 			if (cu__table_add_tag(cu, tag, &id) < 0) {
@@ -1355,6 +1406,11 @@ static int die__process_namespace(Dwarf_Die *die, struct namespace *namespace,
 		tag = die__process_tag(die, cu, 0);
 		if (tag == NULL)
 			goto out_enomem;
+
+		if (tag == &unsupported_tag) {
+			tag__print_not_supported(dwarf_tag(die));
+			continue;
+		}
 
 		uint32_t id;
 		if (cu__table_add_tag(cu, tag, &id) < 0)
@@ -1451,8 +1507,10 @@ static int die__process_inline_expansion(Dwarf_Die *die, struct lexblock *lexblo
 			if (tag == NULL)
 				goto out_enomem;
 
-			if (tag == &unsupported_tag)
+			if (tag == &unsupported_tag) {
+				tag__print_not_supported(dwarf_tag(die));
 				continue;
+			}
 
 			if (cu__add_tag(cu, tag, &id) < 0)
 				goto out_delete_tag;
@@ -1568,8 +1626,10 @@ static int die__process_function(Dwarf_Die *die, struct ftype *ftype,
 			if (tag == NULL)
 				goto out_enomem;
 
-			if (tag == &unsupported_tag)
+			if (tag == &unsupported_tag) {
+				tag__print_not_supported(dwarf_tag(die));
 				continue;
+			}
 
 			if (cu__add_tag(cu, tag, &id) < 0)
 				goto out_delete_tag;
@@ -1615,8 +1675,12 @@ static struct tag *__die__process_tag(Dwarf_Die *die, struct cu *cu,
 	struct tag *tag;
 
 	switch (dwarf_tag(die)) {
+	case DW_TAG_imported_unit:
+		return NULL; // We don't support imported units yet, so to avoid segfaults
 	case DW_TAG_array_type:
 		tag = die__create_new_array(die, cu);		break;
+	case DW_TAG_string_type: // FORTRAN stuff, looks like an array
+		tag = die__create_new_string_type(die, cu);	break;
 	case DW_TAG_base_type:
 		tag = die__create_new_base_type(die, cu);	break;
 	case DW_TAG_const_type:
@@ -1673,8 +1737,13 @@ static int die__process_unit(Dwarf_Die *die, struct cu *cu)
 		if (tag == NULL)
 			return -ENOMEM;
 
-		if (tag == &unsupported_tag)
+		if (tag == &unsupported_tag) {
+			// XXX special case DW_TAG_dwarf_procedure, appears when looking at a recent ~/bin/perf
+			// Investigate later how to properly support this...
+			if (dwarf_tag(die) != DW_TAG_dwarf_procedure)
+				tag__print_not_supported(dwarf_tag(die));
 			continue;
+		}
 
 		uint32_t id;
 		cu__add_tag(cu, tag, &id);
@@ -2008,6 +2077,17 @@ static int tag__recode_dwarf_type(struct tag *tag, struct cu *cu)
 		if (dtype != NULL)
 			goto out;
 		goto find_type;
+	case DW_TAG_variable: {
+		struct variable *var = tag__variable(tag);
+		dwarf_off_ref specification = dwarf_tag__spec(dtag);
+
+		if (specification.off) {
+			dtype = dwarf_cu__find_tag_by_ref(cu->priv, &specification);
+			if (dtype)
+				var->spec = tag__variable(dtype->tag);
+		}
+	}
+
 	}
 
 	if (dtag->type.off == 0) {
@@ -2085,7 +2165,19 @@ static int die__process(Dwarf_Die *die, struct cu *cu)
 	Dwarf_Die child;
 	const uint16_t tag = dwarf_tag(die);
 
-	if (tag != DW_TAG_compile_unit && tag != DW_TAG_type_unit && tag != DW_TAG_partial_unit) {
+	if (tag == DW_TAG_partial_unit) {
+		static bool warned;
+
+		if (!warned) {
+			fprintf(stderr, "WARNING: DW_TAG_partial_unit used, some types will not be considered!\n"
+					"         Probably this was optimized using a tool like 'dwz'\n"
+					"         A future version of pahole will take support this.\n");
+			warned = true;
+		}
+		return 0; // so that other units can be processed
+	}
+
+	if (tag != DW_TAG_compile_unit && tag != DW_TAG_type_unit) {
 		fprintf(stderr, "%s: DW_TAG_compile_unit, DW_TAG_type_unit or DW_TAG_partial_unit expected got %s!\n",
 			__FUNCTION__, dwarf_tag_name(tag));
 		return -EINVAL;
@@ -2309,11 +2401,11 @@ static int cus__load_module(struct cus *cus, struct conf_load *conf,
 {
 	Dwarf_Off off = 0, noff;
 	size_t cuhl;
-	GElf_Addr vaddr;
 	const unsigned char *build_id = NULL;
 	uint8_t pointer_size, offset_size;
 
 #ifdef HAVE_DWFL_MODULE_BUILD_ID
+	GElf_Addr vaddr;
 	int build_id_len = dwfl_module_build_id(mod, &build_id, &vaddr);
 #else
 	int build_id_len = 0;
@@ -2341,6 +2433,9 @@ static int cus__load_module(struct cus *cus, struct conf_load *conf,
 			    &offset_size) == 0) {
 		Dwarf_Die die_mem;
 		Dwarf_Die *cu_die = dwarf_offdie(dw, off + cuhl, &die_mem);
+
+		if (cu_die == NULL)
+			break;
 
 		/*
 		 * DW_AT_name in DW_TAG_compile_unit can be NULL, first

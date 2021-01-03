@@ -13,6 +13,7 @@
 #include <obstack.h>
 #include <dwarf.h>
 #include <elfutils/libdwfl.h>
+#include <sys/types.h>
 
 #include "dutil.h"
 #include "list.h"
@@ -54,6 +55,12 @@ struct conf_load {
 
 /** struct conf_fprintf - hints to the __fprintf routines
  *
+ * @count - Just like 'dd', stop pretty printing input after 'count' records
+ * @skip - Just like 'dd', skip 'count' records when pretty printing input
+ * @seek_bytes - Number of bytes to seek, if stdin only from start, when we have --pretty FILE, then from the end as well with negative numbers,
+ * 		 may be of the form $header.MEMBER_NAME when using with --header.
+ * @size_bytes - Number of bytes to read, similar to seek_bytes, and when both are in place, first seek seek_bytes then read size_bytes
+ * @range - data structure field in --header to determine --seek_bytes and --size_bytes, must have 'offset' and 'size' fields
  * @flat_arrays - a->foo[10][2] becomes a->foo[20]
  * @classes_as_structs - class f becomes struct f, CTF doesn't have a "class"
  * @cachelinep - pointer to current cacheline, so that when expanding types we keep track of it,
@@ -68,7 +75,13 @@ struct conf_fprintf {
 	int32_t	   type_spacing;
 	int32_t	   name_spacing;
 	uint32_t   base_offset;
+	uint32_t   count;
 	uint32_t   *cachelinep;
+	const char *seek_bytes;
+	const char *size_bytes;
+	const char *header_type;
+	const char *range;
+	uint32_t   skip;
 	uint8_t	   indent;
 	uint8_t	   expand_types:1;
 	uint8_t	   expand_pointers:1;
@@ -121,6 +134,8 @@ struct tag *cus__find_struct_by_name(const struct cus *cus, struct cu **cu,
 struct tag *cus__find_struct_or_union_by_name(const struct cus *cus, struct cu **cu,
 					      const char *name, const int include_decls, type_id_t *id);
 struct tag *cu__find_type_by_name(const struct cu *cu, const char *name, const int include_decls, type_id_t *idp);
+struct tag *cus__find_type_by_name(const struct cus *cus, struct cu **cu, const char *name,
+				   const int include_decls, type_id_t *id);
 struct function *cus__find_function_at_addr(const struct cus *cus,
 					    uint64_t addr, struct cu **cu);
 void cus__for_each_cu(struct cus *cus, int (*iterator)(struct cu *cu, void *cookie),
@@ -341,6 +356,7 @@ struct tag *cu__find_base_type_by_sname_and_size(const struct cu *cu,
 						 strings_t name,
 						 uint16_t bit_size,
 						 type_id_t *idp);
+struct tag *cu__find_enumeration_by_name(const struct cu *cu, const char *name, type_id_t *idp);
 struct tag *cu__find_enumeration_by_sname_and_size(const struct cu *cu,
 						   strings_t sname,
 						   uint16_t bit_size,
@@ -378,6 +394,12 @@ struct tag {
 	bool		 top_level;
 	uint16_t	 recursivity_level;
 	void		 *priv;
+};
+
+// To use with things like type->type_enum == perf_event_type+perf_user_event_type
+struct tag_cu {
+	struct tag	 *tag;
+	struct cu	 *cu;
 };
 
 void tag__delete(struct tag *tag, struct cu *cu);
@@ -480,6 +502,7 @@ static inline int tag__is_tag_type(const struct tag *tag)
 {
 	return tag__is_type(tag) ||
 	       tag->tag == DW_TAG_array_type ||
+	       tag->tag == DW_TAG_string_type ||
 	       tag->tag == DW_TAG_base_type ||
 	       tag->tag == DW_TAG_const_type ||
 	       tag->tag == DW_TAG_pointer_type ||
@@ -657,6 +680,7 @@ struct variable {
 	enum vscope	 scope;
 	struct location	 location;
 	struct hlist_node tool_hnode;
+	struct variable  *spec;
 };
 
 static inline struct variable *tag__variable(const struct tag *tag)
@@ -912,6 +936,16 @@ static __pure inline int tag__is_class_member(const struct tag *tag)
 	return tag->tag == DW_TAG_member;
 }
 
+int tag__is_base_type(const struct tag *tag, const struct cu *cu);
+bool tag__is_array(const struct tag *tag, const struct cu *cu);
+
+struct class_member_filter;
+
+struct tag_cu_node {
+	struct list_head node;
+	struct tag_cu	 tc;
+};
+
 /**
  * struct type - base type for enumerations, structs and unions
  *
@@ -920,6 +954,12 @@ static __pure inline int tag__is_class_member(const struct tag *tag)
  * @nr_tags: number of tags
  * @alignment: DW_AT_alignement, zero if not present, gcc emits since circa 7.3.1
  * @natural_alignment: For inferring __packed__, normally the widest scalar in it, recursively
+ * @sizeof_member: Use this to find the size of the record
+ * @type_member: Use this to select a member from where to get an id on an enum to find a type
+ * 		 to cast for, needs to be used with the upcoming type_enum.
+ * @type_enum: enumeration(s) to use together with type_member to find a type to cast
+ * @member_prefix: the common prefix for all members, say in an enum, this should be calculated on demand
+ * @member_prefix_len: the lenght of the common prefix for all members
  */
 struct type {
 	struct namespace namespace;
@@ -929,6 +969,12 @@ struct type {
 	uint16_t	 nr_static_members;
 	uint16_t	 nr_members;
 	uint32_t	 alignment;
+	struct class_member *sizeof_member;
+	struct class_member *type_member;
+	struct class_member_filter *filter;
+	struct list_head type_enum;
+	char 		 *member_prefix;
+	uint16_t	 member_prefix_len;
 	uint16_t	 natural_alignment;
 	bool		 packed_attributes_inferred;
 	uint8_t		 declaration; /* only one bit used */
@@ -936,6 +982,8 @@ struct type {
 	uint8_t		 fwd_decl_emitted:1;
 	uint8_t		 resized:1;
 };
+
+void __type__init(struct type *type);
 
 static inline struct class *type__class(const struct type *type)
 {
@@ -1047,6 +1095,12 @@ struct class_member *type__find_member_by_name(const struct type *type,
 					       const char *name);
 uint32_t type__nr_members_of_type(const struct type *type, const type_id_t oftype);
 struct class_member *type__last_member(struct type *type);
+
+void enumeration__calc_prefix(struct type *type, const struct cu *cu);
+const char *enumeration__prefix(struct type *type, const struct cu *cu);
+uint16_t enumeration__prefix_len(struct type *type, const struct cu *cu);
+
+void enumerations__calc_prefix(struct list_head *enumerations);
 
 size_t typedef__fprintf(const struct tag *tag_type, const struct cu *cu,
 			const struct conf_fprintf *conf, FILE *fp);
@@ -1232,10 +1286,21 @@ static inline struct array_type *tag__array_type(const struct tag *tag)
 	return (struct array_type *)tag;
 }
 
+struct string_type {
+	struct tag      tag;
+	uint32_t        nr_entries;
+};
+
+static inline struct string_type *tag__string_type(const struct tag *tag)
+{
+	return (struct string_type *)tag;
+}
+
 struct enumerator {
 	struct tag	 tag;
 	strings_t	 name;
 	uint32_t	 value;
+	struct tag_cu	 type_enum; // To cache the type_enum searches
 };
 
 static inline const char *enumerator__name(const struct enumerator *enumerator,
@@ -1259,5 +1324,7 @@ struct argp_state;
 void dwarves_print_version(FILE *fp, struct argp_state *state);
 
 extern bool no_bitfield_type_recode;
+
+extern const char tabs[];
 
 #endif /* _DWARVES_H_ */

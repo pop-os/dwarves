@@ -2,7 +2,7 @@
 %define libver 1
 
 Name: dwarves
-Version: 1.17
+Version: 1.18
 Release: 1%{?dist}
 License: GPLv2
 Summary: Debugging Information Manipulation Tools (pahole & friends)
@@ -39,7 +39,13 @@ One example of pfunct usage is in the fullcircle tool, a shell that drivers
 pfunct to generate compileable code out of a .o file and then build it using
 gcc, with the same compiler flags, and then use codiff to make sure the
 original .o file and the new one generated from debug info produces the same
-debug info.
+debug info.pick
+
+Pahole also can be used to use all this type information to pretty print raw data
+according to command line directions.
+
+Headers can have its data format described from debugging info and offsets from
+it can be used to further format a number of records.
 
 The btfdiff utility compares the output of pahole from BTF and DWARF to make
 sure they produce the same results.
@@ -61,19 +67,19 @@ Debugging information processing library development files.
 %setup -q
 
 %build
-%cmake .
-make VERBOSE=1 %{?_smp_mflags}
+%cmake -DCMAKE_BUILD_TYPE=Release .
+%cmake_build
 
 %install
 rm -Rf %{buildroot}
-make install DESTDIR=%{buildroot}
+%cmake_install
 
 %ldconfig_scriptlets -n %{libname}%{libver}
 
 %files
 %doc README.ctracer
 %doc README.btf
-%doc changes-v1.17
+%doc changes-v1.18
 %doc NEWS
 %{_bindir}/btfdiff
 %{_bindir}/codiff
@@ -128,7 +134,14 @@ make install DESTDIR=%{buildroot}
 %{_libdir}/%{libname}_reorganize.so
 
 %changelog
-* Fri Mar 16 2020 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.17-1
+* Fri Oct 02 2020 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.18-1
+- New release: 1.18
+- Use debugging info to pretty print raw data
+- Store percpu variables in vmlinux BTF.
+- Fixes to address segfaults on the gdb testsuite binaries
+- Bail out on partial units for now, avoiding segfaults and providing warning to user.
+
+* Fri Mar 13 2020 Arnaldo Carvalho de Melo <acme@redhat.com> - 1.17-1
 - New release: 1.17
 - Support raw BTF as available in /sys/kernel/btf/vmlinux.
 - When the sole argument passed isn't a file, take it as a class name:

@@ -35,6 +35,41 @@
 
 #define min(x, y) ((x) < (y) ? (x) : (y))
 
+int tag__is_base_type(const struct tag *tag, const struct cu *cu)
+{
+	switch (tag->tag) {
+	case DW_TAG_base_type:
+		return 1;
+
+	case DW_TAG_typedef: {
+		const struct tag *type = cu__type(cu, tag->type);
+
+		if (type == NULL)
+			return 0;
+		return tag__is_base_type(type, cu);
+	}
+	}
+	return 0;
+}
+
+bool tag__is_array(const struct tag *tag, const struct cu *cu)
+{
+	switch (tag->tag) {
+	case DW_TAG_array_type:
+		return true;
+
+	case DW_TAG_const_type:
+	case DW_TAG_typedef: {
+		const struct tag *type = cu__type(cu, tag->type);
+
+		if (type == NULL)
+			return 0;
+		return tag__is_array(type, cu);
+	}
+	}
+	return 0;
+}
+
 const char *cu__string(const struct cu *cu, strings_t s)
 {
 	if (cu->dfops && cu->dfops->strings__ptr)
@@ -287,6 +322,15 @@ void namespace__delete(struct namespace *space, struct cu *cu)
 	}
 
 	tag__delete(&space->tag, cu);
+}
+
+void __type__init(struct type *type)
+{
+	INIT_LIST_HEAD(&type->node);
+	INIT_LIST_HEAD(&type->type_enum);
+	type->sizeof_member = NULL;
+	type->member_prefix = NULL;
+	type->member_prefix_len = 0;
 }
 
 struct class_member *
@@ -699,6 +743,30 @@ struct tag *cu__find_enumeration_by_sname_and_size(const struct cu *cu,
 	return NULL;
 }
 
+struct tag *cu__find_enumeration_by_name(const struct cu *cu, const char *name, type_id_t *idp)
+{
+	uint32_t id;
+	struct tag *pos;
+
+	if (name == NULL)
+		return NULL;
+
+	cu__for_each_type(cu, id, pos) {
+		if (pos->tag == DW_TAG_enumeration_type) {
+			const struct type *type = tag__type(pos);
+			const char *tname = type__name(type, cu);
+
+			if (tname && strcmp(tname, name) == 0) {
+				if (idp != NULL)
+					*idp = id;
+				return pos;
+			}
+		}
+	}
+
+	return NULL;
+}
+
 struct tag *cu__find_struct_by_sname(const struct cu *cu, strings_t sname,
 				     const int include_decls, type_id_t *idp)
 {
@@ -761,6 +829,23 @@ found:
 	if (idp != NULL)
 		*idp = id;
 	return pos;
+}
+
+struct tag *cus__find_type_by_name(const struct cus *cus, struct cu **cu, const char *name,
+				   const int include_decls, type_id_t *id)
+{
+	struct cu *pos;
+
+	list_for_each_entry(pos, &cus->cus, node) {
+		struct tag *tag = cu__find_type_by_name(pos, name, include_decls, id);
+		if (tag != NULL) {
+			if (cu != NULL)
+				*cu = pos;
+			return tag;
+		}
+	}
+
+	return NULL;
 }
 
 static struct tag *__cu__find_struct_by_name(const struct cu *cu, const char *name,
@@ -922,6 +1007,8 @@ size_t tag__size(const struct tag *tag, const struct cu *cu)
 	size_t size;
 
 	switch (tag->tag) {
+	case DW_TAG_string_type:
+		return tag__string_type(tag)->nr_entries;
 	case DW_TAG_member: {
 		struct class_member *member = tag__class_member(tag);
 		if (member->is_static)
@@ -1340,6 +1427,9 @@ static size_t tag__natural_alignment(struct tag *tag, const struct cu *cu)
 {
 	size_t natural_alignment = 1;
 
+	if (tag == NULL) // Maybe its a non supported type, like DW_TAG_subrange_type, ADA stuff
+		return natural_alignment;
+
 	if (tag__is_pointer(tag)) {
 		natural_alignment = cu->addr_size;
 	} else if (tag->tag == DW_TAG_base_type) {
@@ -1350,7 +1440,8 @@ static size_t tag__natural_alignment(struct tag *tag, const struct cu *cu)
 		natural_alignment = type__natural_alignment(tag__type(tag), cu);
 	} else if (tag->tag == DW_TAG_array_type) {
 		tag = tag__strip_typedefs_and_modifiers(tag, cu);
-		natural_alignment = tag__natural_alignment(tag, cu);
+		if (tag != NULL) // Maybe its a non supported type, like DW_TAG_subrange_type, ADA stuff
+			natural_alignment = tag__natural_alignment(tag, cu);
 	}
 
 	/*
@@ -1381,6 +1472,10 @@ static size_t type__natural_alignment(struct type *type, const struct cu *cu)
 		if (member->is_static) continue;
 
 		struct tag *member_type = tag__strip_typedefs_and_modifiers(&member->tag, cu);
+
+		if (member_type == NULL) // Maybe its a DW_TAG_subrange_type, ADA stuff still not supported
+			continue;
+
 		size_t member_natural_alignment = tag__natural_alignment(member_type, cu);
 
 		if (type->natural_alignment < member_natural_alignment)
@@ -1402,6 +1497,13 @@ void type__check_structs_at_unnatural_alignments(struct type *type, const struct
 
 	type__for_each_member(type, member) {
 		struct tag *member_type = tag__strip_typedefs_and_modifiers(&member->tag, cu);
+
+		if (member_type == NULL) {
+			// just be conservative and ignore
+			// Found first when a FORTRAN95 DWARF file was processed
+			// and the DW_TAG_string_type wasn't yet supported
+			continue;
+		}
 
 		if (!tag__is_struct(member_type))
 			continue;
@@ -1542,6 +1644,70 @@ struct class_member *type__find_member_by_name(const struct type *type,
 
 	return NULL;
 }
+
+static int strcommon(const char *a, const char *b)
+{
+	int i = 0;
+
+	while (*a != '\0' && *a == *b) {
+		++a;
+		++b;
+		++i;
+	}
+
+	return i;
+}
+
+void enumeration__calc_prefix(struct type *enumeration, const struct cu *cu)
+{
+	if (enumeration->member_prefix)
+		return;
+
+	const char *previous_name = NULL, *curr_name = "";
+	int common_part = INT32_MAX;
+	struct enumerator *entry;
+
+	type__for_each_enumerator(enumeration, entry) {
+		const char *curr_name = enumerator__name(entry, cu);
+
+		if (previous_name) {
+			int curr_common_part = strcommon(curr_name, previous_name);
+			if (common_part > curr_common_part)
+				common_part = curr_common_part;
+
+		}
+
+		previous_name = curr_name;
+	}
+
+	enumeration->member_prefix = strndup(curr_name, common_part);
+	enumeration->member_prefix_len = common_part == INT32_MAX ? 0 : common_part;
+}
+
+void enumerations__calc_prefix(struct list_head *enumerations)
+{
+	struct tag_cu_node *pos;
+
+	list_for_each_entry(pos, enumerations, node)
+		enumeration__calc_prefix(tag__type(pos->tc.tag), pos->tc.cu);
+}
+
+const char *enumeration__prefix(struct type *enumeration, const struct cu *cu)
+{
+	if (!enumeration->member_prefix)
+		enumeration__calc_prefix(enumeration, cu);
+
+	return enumeration->member_prefix;
+}
+
+uint16_t enumeration__prefix_len(struct type *enumeration, const struct cu *cu)
+{
+	if (!enumeration->member_prefix)
+		enumeration__calc_prefix(enumeration, cu);
+
+	return enumeration->member_prefix_len;
+}
+
 
 uint32_t type__nr_members_of_type(const struct type *type, const type_id_t type_id)
 {

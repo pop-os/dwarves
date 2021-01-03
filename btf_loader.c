@@ -97,6 +97,7 @@ static int create_new_function(struct btf_elf *btfe, struct btf_type *tp, uint64
 	func->btf = 1;
 	func->proto.tag.tag = DW_TAG_subprogram;
 	func->proto.tag.type = type_id;
+	INIT_LIST_HEAD(&func->lexblock.tags);
 	func->name = name;
 	cu__add_tag_with_id(btfe->priv, &func->proto.tag, id);
 
@@ -122,7 +123,7 @@ static struct base_type *base_type__new(strings_t name, uint32_t attrs,
 static void type__init(struct type *type, uint32_t tag,
 		       strings_t name, size_t size)
 {
-	INIT_LIST_HEAD(&type->node);
+	__type__init(type);
 	INIT_LIST_HEAD(&type->namespace.tags);
 	type->size = size;
 	type->namespace.tag.tag = tag;

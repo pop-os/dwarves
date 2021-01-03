@@ -16,6 +16,7 @@
 #include <gelf.h>
 #include <asm/bitsperlong.h>
 #include "rbtree.h"
+#include "list.h"
 
 #define BITS_PER_LONG __BITS_PER_LONG
 
@@ -266,13 +267,21 @@ int ____ilog2_NaN(void);
 #define ARGP_PROGRAM_BUG_ADDRESS_DEF \
 	const char *const apba__ __asm ("argp_program_bug_address")
 
+// Use a list_head so that we keep the original order when iterating in
+// the strlist.
+
 struct str_node {
 	struct rb_node rb_node;
+	struct list_head node;
 	const char       *s;
+	void		 *priv;
 };
+
+// list_entries to keep the original order as passed, say, in the command line
 
 struct strlist {
 	struct rb_root entries;
+	struct list_head list_entries;
 	bool dupstr;
 };
 
@@ -282,6 +291,7 @@ void strlist__delete(struct strlist *slist);
 void strlist__remove(struct strlist *slist, struct str_node *sn);
 int strlist__load(struct strlist *slist, const char *filename);
 int strlist__add(struct strlist *slist, const char *str);
+int __strlist__add(struct strlist *slist, const char *str, void *priv);
 
 bool strlist__has_entry(struct strlist *slist, const char *entry);
 
@@ -289,6 +299,15 @@ static inline bool strlist__empty(const struct strlist *slist)
 {
 	return rb_first(&slist->entries) == NULL;
 }
+
+/**
+ * strlist__for_each_entry_safe - iterate thru all the strings safe against removal of list entry
+ * @slist: struct strlist instance to iterate
+ * @pos: struct str_node iterator
+ * @n: tmp struct str_node
+ */
+#define strlist__for_each_entry_safe(slist, pos, n) \
+	list_for_each_entry_safe(pos, n, &(slist)->list_entries, node)
 
 /**
  * strstarts - does @str start with @prefix?
@@ -312,5 +331,7 @@ static inline int elf_getshdrstrndx(Elf *elf, size_t *dst)
 	return elf_getshstrndx(elf, dst);
 }
 #endif
+
+char *strlwr(char *s);
 
 #endif /* _DUTIL_H_ */

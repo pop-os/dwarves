@@ -3,17 +3,19 @@
 
   Copyright (C) 2006 Mandriva Conectiva S.A.
   Copyright (C) 2006 Arnaldo Carvalho de Melo <acme@mandriva.com>
-  Copyright (C) 2007-2008 Arnaldo Carvalho de Melo <acme@redhat.com>
+  Copyright (C) 2007- Arnaldo Carvalho de Melo <acme@redhat.com>
 */
 
 #include <argp.h>
 #include <assert.h>
 #include <stdio.h>
 #include <dwarf.h>
+#include <inttypes.h>
 #include <search.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "dwarves_reorganize.h"
 #include "dwarves.h"
@@ -24,6 +26,8 @@
 static bool btf_encode;
 static bool ctf_encode;
 static bool first_obj_only;
+static bool skip_encoding_btf_vars;
+static bool btf_encode_force;
 
 static uint8_t class__include_anonymous;
 static uint8_t class__include_nested_anonymous;
@@ -56,8 +60,8 @@ static bool defined_in;
 static bool just_unions;
 static bool just_structs;
 static int show_reorg_steps;
-static char *class_name;
-static struct strlist *class_names;
+static const char *class_name;
+static LIST_HEAD(class_names);
 static char separator = '\t';
 
 static struct conf_fprintf conf = {
@@ -800,6 +804,14 @@ ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 #define ARGP_suppress_packed	   308
 #define ARGP_just_unions	   309
 #define ARGP_just_structs	   310
+#define ARGP_count		   311
+#define ARGP_skip		   312
+#define ARGP_seek_bytes		   313
+#define ARGP_header_type	   314
+#define ARGP_size_bytes		   315
+#define ARGP_range		   316
+#define ARGP_skip_encoding_btf_vars 317
+#define ARGP_btf_encode_force	   318
 
 static const struct argp_option pahole__options[] = {
 	{
@@ -819,6 +831,42 @@ static const struct argp_option pahole__options[] = {
 		.key  = 'C',
 		.arg  = "CLASS_NAME",
 		.doc  = "Show just this class"
+	},
+	{
+		.name = "count",
+		.key  = ARGP_count,
+		.arg  = "COUNT",
+		.doc  = "Print only COUNT input records"
+	},
+	{
+		.name = "skip",
+		.key  = ARGP_skip,
+		.arg  = "COUNT",
+		.doc  = "Skip COUNT input records"
+	},
+	{
+		.name = "seek_bytes",
+		.key  = ARGP_seek_bytes,
+		.arg  = "BYTES",
+		.doc  = "Seek COUNT input records"
+	},
+	{
+		.name = "size_bytes",
+		.key  = ARGP_size_bytes,
+		.arg  = "BYTES",
+		.doc  = "Read only this number of bytes from this point onwards"
+	},
+	{
+		.name = "range",
+		.key  = ARGP_range,
+		.arg  = "STRUCT",
+		.doc  = "Data struct with 'offset' and 'size' fields to determine --seek_bytes and --size_bytes"
+	},
+	{
+		.name = "header_type",
+		.key  = ARGP_header_type,
+		.arg  = "TYPE",
+		.doc  = "File header type"
 	},
 	{
 		.name = "find_pointers_to",
@@ -1043,6 +1091,16 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "Encode as BTF",
 	},
 	{
+		.name = "skip_encoding_btf_vars",
+		.key  = ARGP_skip_encoding_btf_vars,
+		.doc  = "Do not encode VARs in BTF."
+	},
+	{
+		.name = "btf_encode_force",
+		.key  = ARGP_btf_encode_force,
+		.doc  = "Ignore those symbols found invalid when encoding BTF."
+	},
+	{
 		.name = "structs",
 		.key  = ARGP_just_structs,
 		.doc  = "Show just structs",
@@ -1084,6 +1142,7 @@ static error_t pahole__options_parser(int key, char *arg,
 	case 'i': find_containers = 1;
 		  class_name = arg;			break;
 	case 'J': btf_encode = 1;
+		  conf_load.get_addr_info = true;
 		  no_bitfield_type_recode = true;	break;
 	case 'l': conf.show_first_biggest_size_base_type_member = 1;	break;
 	case 'M': conf.show_only_data_members = 1;	break;
@@ -1143,6 +1202,22 @@ static error_t pahole__options_parser(int key, char *arg,
 		just_unions = true;			break;
 	case ARGP_just_structs:
 		just_structs = true;			break;
+	case ARGP_count:
+		conf.count = atoi(arg);			break;
+	case ARGP_skip:
+		conf.skip = atoi(arg);			break;
+	case ARGP_seek_bytes:
+		conf.seek_bytes = arg;			break;
+	case ARGP_size_bytes:
+		conf.size_bytes = arg;			break;
+	case ARGP_range:
+		conf.range = arg;			break;
+	case ARGP_header_type:
+		conf.header_type = arg;			break;
+	case ARGP_skip_encoding_btf_vars:
+		skip_encoding_btf_vars = true;		break;
+	case ARGP_btf_encode_force:
+		btf_encode_force = true;		break;
 	default:
 		return ARGP_ERR_UNKNOWN;
 	}
@@ -1197,6 +1272,1088 @@ static void do_reorg(struct tag *class, struct cu *cu)
 	*/
 }
 
+static int tag__fprintf_hexdump_value(struct tag *type, struct cu *cu, void *instance, int _sizeof, FILE *fp)
+{
+	uint8_t *contents = instance;
+	int i, printed = 0;
+
+	for (i = 0; i < _sizeof; ++i) {
+		if (i != 0) {
+			fputc(' ', fp);
+			++printed;
+		}
+
+		printed += fprintf(fp, "0x%02x", contents[i]);
+	}
+
+	return printed;
+}
+
+static uint64_t base_type__value(void *instance, int _sizeof)
+{
+	if (_sizeof == sizeof(int))
+		return *(int *)instance;
+	else if (_sizeof == sizeof(long))
+		return *(long *)instance;
+	else if (_sizeof == sizeof(long long))
+		return *(long long *)instance;
+	else if (_sizeof == sizeof(char))
+		return *(char *)instance;
+	else if (_sizeof == sizeof(short))
+		return *(short *)instance;
+
+	return 0;
+}
+
+static int fprintf__value(FILE* fp, uint64_t value)
+{
+	const char *format = conf.hex_fmt ? "%#" PRIx64 : "%" PRIi64;
+
+	return fprintf(fp, format, value);
+}
+
+static int base_type__fprintf_value(void *instance, int _sizeof, FILE *fp)
+{
+	uint64_t value = base_type__value(instance, _sizeof);
+	return fprintf__value(fp, value);
+}
+
+static uint64_t class_member__bitfield_value(struct class_member *member, void *instance)
+{
+	int byte_size = member->byte_size;
+	uint64_t value = base_type__value(instance, byte_size);
+	uint64_t mask = 0;
+	int bits = member->bitfield_size;
+
+	while (bits) {
+		mask |= 1;
+		if (--bits)
+			mask <<= 1;
+	}
+
+	mask <<= member->bitfield_offset;
+
+	return (value & mask) >> member->bitfield_offset;
+}
+
+static int class_member__fprintf_bitfield_value(struct class_member *member, void *instance, FILE *fp)
+{
+	const char *format = conf.hex_fmt ? "%#" PRIx64 : "%" PRIi64;
+	return fprintf(fp, format, class_member__bitfield_value(member, instance));
+}
+
+static const char *enumeration__lookup_value(struct type *enumeration, struct cu *cu, uint64_t value)
+{
+	struct enumerator *entry;
+
+	type__for_each_enumerator(enumeration, entry) {
+		if (entry->value == value)
+			return enumerator__name(entry, cu);
+	}
+
+	return NULL;
+}
+
+static const char *enumerations__lookup_value(struct list_head *enumerations, uint64_t value)
+{
+	struct tag_cu_node *pos;
+
+	list_for_each_entry(pos, enumerations, node) {
+		const char *s = enumeration__lookup_value(tag__type(pos->tc.tag), pos->tc.cu, value);
+		if (s)
+			return s;
+	}
+
+	return NULL;
+}
+
+static struct enumerator *enumeration__lookup_entry_from_value(struct type *enumeration, struct cu *cu, uint64_t value)
+{
+	struct enumerator *entry;
+
+	type__for_each_enumerator(enumeration, entry) {
+		if (entry->value == value)
+			return entry;
+	}
+
+	return NULL;
+}
+
+static struct enumerator *enumerations__lookup_entry_from_value(struct list_head *enumerations, struct cu **cup, uint64_t value)
+{
+	struct tag_cu_node *pos;
+
+	list_for_each_entry(pos, enumerations, node) {
+		struct enumerator *enumerator = enumeration__lookup_entry_from_value(tag__type(pos->tc.tag), pos->tc.cu, value);
+		if (enumerator) {
+			*cup = pos->tc.cu;
+			return enumerator;
+		}
+	}
+
+	return NULL;
+}
+
+static int64_t enumeration__lookup_enumerator(struct type *enumeration, struct cu *cu, const char *enumerator)
+{
+	struct enumerator *entry;
+
+	type__for_each_enumerator(enumeration, entry) {
+		const char *entry_name = enumerator__name(entry, cu);
+
+		if (!strcmp(entry_name, enumerator))
+			return entry->value;
+
+		if (enumeration->member_prefix_len &&
+		    !strcmp(entry_name + enumeration->member_prefix_len, enumerator))
+			return entry->value;
+	}
+
+	return -1;
+}
+
+static int64_t enumerations__lookup_enumerator(struct list_head *enumerations, const char *enumerator)
+{
+	struct tag_cu_node *pos;
+
+	list_for_each_entry(pos, enumerations, node) {
+		int64_t value = enumeration__lookup_enumerator(tag__type(pos->tc.tag), pos->tc.cu, enumerator);
+		if (value != -1)
+			return value;
+	}
+
+	return -1;
+}
+
+static int base_type__fprintf_enum_value(void *instance, int _sizeof, struct list_head *enumerations, FILE *fp)
+{
+	uint64_t value = base_type__value(instance, _sizeof);
+
+	const char *entry = enumerations__lookup_value(enumerations, value);
+
+	if (entry)
+		return fprintf(fp, "%s", entry);
+
+	return fprintf__value(fp, value);
+}
+
+static int string__fprintf_value(char *instance, int _sizeof, FILE *fp)
+{
+	return fprintf(fp, "\"%-.*s\"", _sizeof, instance);
+}
+
+static int array__fprintf_base_type_value(struct tag *tag, struct cu *cu, void *instance, int _sizeof, FILE *fp)
+{
+	struct array_type *array = tag__array_type(tag);
+	struct tag *array_type = cu__type(cu, tag->type);
+	void *contents = instance;
+
+	if (array->dimensions != 1) {
+		// Support multi dimensional arrays later
+		return tag__fprintf_hexdump_value(tag, cu, instance, _sizeof, fp);
+	}
+
+	if (tag__is_typedef(array_type))
+		array_type = tag__follow_typedef(array_type, cu);
+
+	int i, printed = 0, sizeof_entry = base_type__size(array_type);
+
+	printed += fprintf(fp, "{ ");
+
+	int nr_entries = array->nr_entries[0];
+
+	// Look for zero sized arrays
+	if (nr_entries == 0)
+		nr_entries = _sizeof / sizeof_entry;
+
+	for (i = 0; i < nr_entries; ++i) {
+		if (i > 0)
+			printed += fprintf(fp, ", ");
+		printed += base_type__fprintf_value(contents, sizeof_entry, fp);
+		contents += sizeof_entry;
+	}
+
+	return printed + fprintf(fp, " }");
+}
+
+static int array__fprintf_value(struct tag *tag, struct cu *cu, void *instance, int _sizeof, FILE *fp)
+{
+	struct tag *array_type = cu__type(cu, tag->type);
+	char type_name[1024];
+
+	if (strcmp(tag__name(array_type, cu, type_name, sizeof(type_name), NULL), "char") == 0)
+		return string__fprintf_value(instance, _sizeof, fp);
+
+	if (tag__is_base_type(array_type, cu))
+		return array__fprintf_base_type_value(tag, cu, instance, _sizeof, fp);
+
+	return tag__fprintf_hexdump_value(tag, cu, instance, _sizeof, fp);
+}
+
+static int __class__fprintf_value(struct tag *tag, struct cu *cu, void *instance, int _sizeof, int indent, bool brackets, FILE *fp)
+{
+	struct type *type = tag__type(tag);
+	struct class_member *member;
+	int printed = 0;
+
+	if (brackets)
+		printed += fprintf(fp, "{");
+
+	type__for_each_member(type, member) {
+		void *member_contents = instance + member->byte_offset;
+		struct tag *member_type = cu__type(cu, member->tag.type);
+		const char *name = class_member__name(member, cu);
+
+		if (name)
+			printed += fprintf(fp, "\n%.*s\t.%s = ", indent, tabs, name);
+
+		if (member == type->type_member && !list_empty(&type->type_enum)) {
+			printed += base_type__fprintf_enum_value(member_contents, member->byte_size, &type->type_enum, fp);
+		} else if (member->bitfield_size) {
+			printed += class_member__fprintf_bitfield_value(member, member_contents, fp);
+		} else if (tag__is_base_type(member_type, cu)) {
+			printed += base_type__fprintf_value(member_contents, member->byte_size, fp);
+		} else if (tag__is_array(member_type, cu)) {
+			int sizeof_member = member->byte_size;
+
+			// zero sized array, at the end of the struct?
+			if (sizeof_member == 0 && list_is_last(&member->tag.node, &type->namespace.tags))
+				sizeof_member = _sizeof - member->byte_offset;
+			printed += array__fprintf_value(member_type, cu, member_contents, sizeof_member, fp);
+		} else if (tag__is_struct(member_type)) {
+			printed += __class__fprintf_value(member_type, cu, member_contents, member->byte_size, indent + 1, true, fp);
+		} else if (tag__is_union(member_type)) {
+			printed += __class__fprintf_value(member_type, cu, member_contents, member->byte_size, indent + (name ? 1 : 0), !!name, fp);
+			if (!name)
+				continue;
+		} else {
+			printed += tag__fprintf_hexdump_value(member_type, cu, member_contents, member->byte_size, fp);
+		}
+
+		fputc(',', fp);
+		++printed;
+	}
+
+	if (brackets)
+		printed += fprintf(fp, "\n%.*s}", indent, tabs);
+	return printed;
+}
+
+static int class__fprintf_value(struct tag *tag, struct cu *cu, void *instance, int _sizeof, int indent, FILE *fp)
+{
+	return __class__fprintf_value(tag, cu, instance, _sizeof, indent, true, fp);
+}
+
+static int tag__fprintf_value(struct tag *type, struct cu *cu, void *instance, int _sizeof, FILE *fp)
+{
+	if (tag__is_struct(type))
+		return class__fprintf_value(type, cu, instance, _sizeof, 0, fp);
+
+	return tag__fprintf_hexdump_value(type, cu, instance, _sizeof, fp);
+}
+
+static int pipe_seek(FILE *fp, off_t offset)
+{
+	char bf[4096];
+	int chunk = sizeof(bf);
+
+	if (chunk > offset)
+		chunk = offset;
+
+	while (fread(bf, chunk, 1, stdin) == 1) {
+		offset -= chunk;
+		if (offset == 0)
+			return 0;
+		if (chunk > offset)
+			chunk = offset;
+	}
+
+	return offset == 0 ? 0 : -1;
+}
+
+static uint64_t tag__real_sizeof(struct tag *tag, struct cu *cu, int _sizeof, void *instance)
+{
+	if (tag__is_struct(tag)) {
+		struct type *type = tag__type(tag);
+
+		if (type->sizeof_member) {
+			struct class_member *member = type->sizeof_member;
+			return base_type__value(instance + member->byte_offset, member->byte_size);
+		}
+	}
+
+	return _sizeof;
+}
+
+/*
+ * Classes should start close to where they are needed, then moved elsewhere, remember:
+ * "Premature optimization is the root of all evil" (Knuth till unproven).
+ *
+ * So far just the '==' operator is supported, so just a struct member + a value are
+ * needed, no, strings are not supported so far.
+ *
+ * If the class member is the 'type=' and we have a 'type_enum=' in place, then we will
+ * resolve that at parse time and convert that to an uint64_t and it'll do the trick.
+ *
+ * More to come, when needed.
+ */
+struct class_member_filter {
+	struct class_member *left;
+	uint64_t	    right;
+};
+
+static bool type__filter_value(struct tag *tag, void *instance)
+{
+	// this has to be a type, otherwise we'd not have a type->filter
+	struct type *type = tag__type(tag);
+	struct class_member_filter *filter = type->filter;
+	struct class_member *member = filter->left;
+	uint64_t value = base_type__value(instance + member->byte_offset, member->byte_size);
+
+	// Only operator supported so far is '=='
+	return value != filter->right;
+}
+
+static struct tag *tag__real_type(struct tag *tag, struct cu **cup, void *instance)
+{
+	if (tag__is_struct(tag)) {
+		struct type *type = tag__type(tag);
+
+		if (!list_empty(&type->type_enum) && type->type_member) {
+			struct class_member *member = type->type_member;
+			uint64_t value = base_type__value(instance + member->byte_offset, member->byte_size);
+			struct cu *cu_enumerator;
+			struct enumerator *enumerator = enumerations__lookup_entry_from_value(&type->type_enum, &cu_enumerator, value);
+			char name[1024];
+
+			if (!enumerator)
+				return tag;
+
+			if (enumerator->type_enum.tag) {
+				*cup = enumerator->type_enum.cu;
+				return enumerator->type_enum.tag;
+			}
+
+			snprintf(name, sizeof(name), "%s", enumerator__name(enumerator, cu_enumerator));
+			strlwr(name);
+
+			struct tag *real_type = cu__find_type_by_name(*cup, name, false, NULL);
+
+			if (!real_type)
+				return NULL;
+
+			if (tag__is_struct(real_type)) {
+				enumerator->type_enum.tag = real_type;
+				enumerator->type_enum.cu  = *cup;
+				return real_type;
+			}
+		}
+	}
+
+	return tag;
+}
+
+struct type_instance {
+	struct type *type;
+	struct cu   *cu;
+	bool	    read_already;
+	char	    instance[0];
+};
+
+static struct type_instance *type_instance__new(struct type *type, struct cu *cu)
+{
+	if (type == NULL)
+		return NULL;
+
+	struct type_instance *instance = malloc(sizeof(*instance) + type->size);
+
+	if (instance) {
+		instance->type = type;
+		instance->cu   = cu;
+		instance->read_already = false;
+	}
+
+	return instance;
+}
+
+static void type_instance__delete(struct type_instance *instance)
+{
+	if (!instance)
+		return;
+	instance->type = NULL;
+	free(instance);
+}
+
+static int64_t type_instance__int_value(struct type_instance *instance, const char *member_name_orig)
+{
+	struct cu *cu = instance->cu;
+	struct class_member *member = type__find_member_by_name(instance->type, cu, member_name_orig);
+	int byte_offset = 0;
+
+	if (!member) {
+		char *sep = strchr(member_name_orig, '.');
+
+		if (!sep)
+			return -1;
+
+		char *member_name_alloc = strdup(member_name_orig);
+
+		if (!member_name_alloc)
+			return -1;
+
+		char *member_name = member_name_alloc;
+		struct type *type = instance->type;
+
+		sep = member_name_alloc + (sep - member_name_orig);
+		*sep = 0;
+
+		while (1) {
+			member = type__find_member_by_name(type, cu, member_name);
+			if (!member) {
+out_free_member_name:
+				free(member_name_alloc);
+				return -1;
+			}
+			byte_offset += member->byte_offset;
+			type = tag__type(cu__type(cu, member->tag.type));
+			if (type == NULL)
+				goto out_free_member_name;
+			member_name = sep + 1;
+			sep = strchr(member_name, '.');
+			if (!sep)
+				break;
+
+		}
+
+		member = type__find_member_by_name(type, cu, member_name);
+		free(member_name_alloc);
+		if (member == NULL)
+			return -1;
+	}
+
+	byte_offset += member->byte_offset;
+
+	struct tag *member_type = cu__type(cu, member->tag.type);
+
+	if (!tag__is_base_type(member_type, cu))
+		return -1;
+
+	return base_type__value(&instance->instance[byte_offset], member->byte_size);
+}
+
+static int64_t type__instance_read_once(struct type_instance *instance, FILE *fp)
+{
+ 	if (!instance || instance->read_already)
+		return 0;
+
+ 	instance->read_already = true;
+
+	return fread(instance->instance, instance->type->size, 1, stdin) != 1 ? -1 : instance->type->size;
+}
+
+/*
+ * struct prototype - split arguments to a type
+ *
+ * @name - type name
+ * @type - name of the member containing a type id
+ * @type_enum - translate @type into a enum entry/string
+ * @type_enum_resolved - if this was already resolved, i.e. if the enums were find in some CU
+ * @size - the member with the size for variable sized records
+ * @filter - filter expression using record contents and values or enum entries
+ * @range - from where to get seek_bytes and size_bytes where to pretty print this specific class
+ */
+struct prototype {
+	struct list_head node;
+	struct tag	 *class;
+	struct cu	 *cu;
+	const char *type,
+		   *type_enum,
+		   *size,
+		   *range;
+	char	   *filter;
+	uint16_t   nr_args;
+	bool	   type_enum_resolved;
+	char name[0];
+
+};
+
+static int prototype__stdio_fprintf_value(struct prototype *prototype, struct type_instance *header, FILE *fp)
+{
+	struct tag *type = prototype->class;
+	struct cu *cu = prototype->cu;
+	int _sizeof = tag__size(type, cu), printed = 0;
+	int max_sizeof = _sizeof;
+	void *instance = malloc(_sizeof);
+	uint64_t size_bytes = ULLONG_MAX;
+	uint32_t count = 0;
+	uint32_t skip = conf.skip;
+
+	if (instance == NULL)
+		return -ENOMEM;
+
+	if (type__instance_read_once(header, stdin) < 0) {
+		int err = --errno;
+		fprintf(stderr, "pahole: --header (%s) type not be read\n", conf.header_type);
+		return err;
+	}
+
+	if (conf.range || prototype->range) {
+		off_t seek_bytes;
+		const char *range = conf.range ?: prototype->range;
+
+		if (!header) {
+			if (conf.header_type)
+				fprintf(stderr, "pahole: --header_type=%s not found\n", conf.header_type);
+			else
+				fprintf(stderr, "pahole: range (%s) requires --header\n", range);
+			return -ESRCH;
+		}
+
+		char *member_name = NULL;
+
+		if (asprintf(&member_name, "%s.%s", range, "offset") == -1) {
+			fprintf(stderr, "pahole: not enough memory for range=%s\n", range);
+			return -ENOMEM;
+		}
+
+		int64_t value = type_instance__int_value(header, member_name);
+
+		if (value < 0) {
+			fprintf(stderr, "pahole: couldn't read the '%s' member of '%s' for evaluating range=%s\n",
+				member_name, conf.header_type, range);
+			free(member_name);
+			return -ESRCH;
+		}
+
+		seek_bytes = value;
+
+		free(member_name);
+
+		off_t total_read_bytes = ftell(stdin);
+
+		// Since we're reading stdin, we need to account for what we already read
+		if (seek_bytes < total_read_bytes) {
+			fprintf(stderr, "pahole: can't go back in stdin, already read %" PRIu64 " bytes, can't go to position %ld\n",
+					total_read_bytes, seek_bytes);
+			return -ENOMEM;
+		}
+
+		if (global_verbose) {
+			fprintf(fp, "pahole: range.seek_bytes evaluated from range=%s is %#" PRIx64 " \n",
+				range, seek_bytes);
+		}
+
+		seek_bytes -= total_read_bytes;
+
+		if (asprintf(&member_name, "%s.%s", range, "size") == -1) {
+			fprintf(stderr, "pahole: not enough memory for range=%s\n", range);
+			return -ENOMEM;
+		}
+
+		value = type_instance__int_value(header, member_name);
+
+		if (value < 0) {
+			fprintf(stderr, "pahole: couldn't read the '%s' member of '%s' for evaluating range=%s\n",
+				member_name, conf.header_type, range);
+			free(member_name);
+			return -ESRCH;
+		}
+
+		size_bytes = value;
+		if (global_verbose) {
+			fprintf(fp, "pahole: range.size_bytes evaluated from range=%s is %#" PRIx64 " \n",
+				range, size_bytes);
+		}
+
+		free(member_name);
+
+		if (pipe_seek(stdin, seek_bytes) < 0) {
+			int err = --errno;
+			fprintf(stderr, "Couldn't --seek_bytes %s (%" PRIu64 "\n", conf.seek_bytes, seek_bytes);
+			return err;
+		}
+
+		goto do_read;
+	}
+
+	if (conf.seek_bytes) {
+		off_t seek_bytes;
+
+		if (strstarts(conf.seek_bytes, "$header.")) {
+			if (!header) {
+				fprintf(stderr, "pahole: --seek_bytes (%s) makes reference to --header but it wasn't specified\n",
+					conf.seek_bytes);
+				return -ESRCH;
+			}
+
+			const char *member_name = conf.seek_bytes + sizeof("$header.") - 1;
+			int64_t value = type_instance__int_value(header, member_name);
+			if (value < 0) {
+				fprintf(stderr, "pahole: couldn't read the '%s' member of '%s' for evaluating --seek_bytes=%s\n",
+					member_name, conf.header_type, conf.seek_bytes);
+				return -ESRCH;
+			}
+
+			seek_bytes = value;
+
+			if (global_verbose)
+				fprintf(stdout, "pahole: seek bytes evaluated from --seek_bytes=%s is %#" PRIx64 " \n",
+					conf.seek_bytes, seek_bytes);
+
+			if (seek_bytes < header->type->size) {
+				fprintf(stderr, "pahole: seek bytes evaluated from --seek_bytes=%s is less than the header type size\n",
+					conf.seek_bytes);
+				return -EINVAL;
+			}
+		} else  {
+			seek_bytes = strtol(conf.seek_bytes, NULL, 0);
+		}
+
+
+		if (header) {
+			// Since we're reading stdin, we need to account for already read header:
+			seek_bytes -= ftell(stdin);
+		}
+
+		if (pipe_seek(stdin, seek_bytes) < 0) {
+			int err = --errno;
+			fprintf(stderr, "Couldn't --seek_bytes %s (%" PRIu64 "\n", conf.seek_bytes, seek_bytes);
+			return err;
+		}
+	}
+
+	if (conf.size_bytes) {
+		if (strstarts(conf.size_bytes, "$header.")) {
+			if (!header) {
+				fprintf(stderr, "pahole: --size_bytes (%s) makes reference to --header but it wasn't specified\n",
+					conf.size_bytes);
+				return -ESRCH;
+			}
+
+			const char *member_name = conf.size_bytes + sizeof("$header.") - 1;
+			int64_t value = type_instance__int_value(header, member_name);
+			if (value < 0) {
+				fprintf(stderr, "pahole: couldn't read the '%s' member of '%s' for evaluating --size_bytes=%s\n",
+					member_name, conf.header_type, conf.size_bytes);
+				return -ESRCH;
+			}
+
+			size_bytes = value;
+
+			if (global_verbose)
+				fprintf(stdout, "pahole: size bytes evaluated from --size_bytes=%s is %#" PRIx64 " \n",
+					conf.size_bytes, size_bytes);
+		} else  {
+			size_bytes = strtol(conf.size_bytes, NULL, 0);
+		}
+	}
+do_read:
+{
+	uint64_t read_bytes = 0;
+	off_t record_offset = ftell(stdin);
+
+	while (fread(instance, _sizeof, 1, stdin) == 1) {
+		// Read it from each record/instance
+		int real_sizeof = tag__real_sizeof(type, cu, _sizeof, instance);
+
+		if (real_sizeof > _sizeof) {
+			if (real_sizeof > max_sizeof) {
+				void *new_instance = realloc(instance, real_sizeof);
+				if (!new_instance) {
+					fprintf(stderr, "Couldn't allocate space for a record, too big: %d bytes\n", real_sizeof);
+					printed = -1;
+					goto out;
+				}
+				instance = new_instance;
+				max_sizeof = real_sizeof;
+			}
+			if (fread(instance + _sizeof, real_sizeof - _sizeof, 1, stdin) != 1) {
+				fprintf(stderr, "Couldn't read record: %d bytes\n", real_sizeof);
+				printed = -1;
+				goto out;
+			}
+		}
+
+		read_bytes += real_sizeof;
+
+		if (tag__type(type)->filter && type__filter_value(type, instance))
+			goto next_record;
+
+		if (skip) {
+			--skip;
+			goto next_record;
+		}
+
+		/*
+		 * pahole -C 'perf_event_header(sizeof=size,typeid=type,enum2type=perf_event_type)
+		 *
+		 * So that it gets the 'type' field as the type id, look this
+		 * up in the 'enum perf_event_type' and find the type to cast the
+		 * whole shebang, i.e.:
+		 *
+
+		 $ pahole ~/bin/perf -C perf_event_header
+		   struct perf_event_header {
+			  __u32        type;       / *  0  4 * /
+			  __u16        misc;       / *  4  2 * /
+			  __u16        size;       / *  6  2 * /
+
+			  / * size: 8, cachelines: 1, members: 3 * /
+			  / * last cacheline: 8 bytes * /
+		   };
+		 $
+
+		 enum perf_event_type {
+			PERF_RECORD_MMAP = 1,
+			PERF_RECORD_LOST = 2,
+			PERF_RECORD_COMM = 3,
+			PERF_RECORD_EXIT = 4,
+			<SNIP>
+		 }
+
+		 * So from the type field get the lookup into the enum and from the result, look
+		 * for a type with that name as-is or in lower case, which will produce, when type = 3:
+
+		 $ pahole -C perf_record_comm ~/bin/perf
+		   struct perf_record_comm {
+			   struct perf_event_header   header;   / *     0     8 * /
+			   __u32                      pid;      / *     8     4 * /
+			   __u32                      tid;      / *    12     4 * /
+			   char                       comm[16]; / *    16    16 * /
+
+			   / * size: 32, cachelines: 1, members: 4 * /
+			   / * last cacheline: 32 bytes * /
+		   };
+		   $
+		 */
+
+		struct cu *real_type_cu = cu;
+		struct tag *real_type = tag__real_type(type, &real_type_cu, instance);
+
+		if (real_type == NULL)
+			real_type = type;
+
+		if (global_verbose) {
+			printed += fprintf(fp, "// type=%s, offset=%#" PRIx64 ", sizeof=%d", type__name(tag__type(type), cu), record_offset, _sizeof);
+			if (real_sizeof != _sizeof)
+				printed += fprintf(fp, ", real_sizeof=%d\n", real_sizeof);
+			else
+				printed += fprintf(fp, "\n");
+		}
+		printed += tag__fprintf_value(real_type, real_type_cu, instance, real_sizeof, fp);
+		printed += fprintf(fp, ",\n");
+
+		if (conf.count && ++count == conf.count)
+			break;
+next_record:
+		if (read_bytes >= size_bytes)
+			break;
+
+		record_offset = ftell(stdin);
+	}
+}
+out:
+	free(instance);
+	return printed;
+}
+
+static int class_member_filter__parse(struct class_member_filter *filter, struct type *type, struct cu *cu, char *sfilter)
+{
+	const char *member_name = sfilter;
+	char *sep = strstr(sfilter, "==");
+
+	if (!sep) {
+		if (global_verbose)
+			fprintf(stderr, "No supported operator ('==' so far) found in filter '%s'\n", sfilter);
+		return -1;
+	}
+
+	char *value = sep + 2, *s = sep;
+
+	while (isspace(*--s))
+		if (s == sfilter) {
+			if (global_verbose)
+				fprintf(stderr, "No left operand (struct field) found in filter '%s'\n", sfilter);
+			return -1; // nothing before ==
+		}
+
+	char before = s[1];
+	s[1] = '\0';
+
+	filter->left = type__find_member_by_name(type, cu, member_name);
+
+	if (!filter->left) {
+		if (global_verbose)
+			fprintf(stderr, "The '%s' member wasn't found in '%s'\n", member_name, type__name(type, cu));
+		s[1] = before;
+		return -1;
+	}
+
+	s[1] = before;
+
+	while (isspace(*value))
+		if (*++value == '\0') {
+			if (global_verbose)
+				fprintf(stderr, "The '%s' member was asked without a value to filter '%s'\n", member_name, type__name(type, cu));
+			return -1; // no value
+		}
+
+	char *endptr;
+	filter->right = strtoll(value, &endptr, 0);
+
+	if (endptr > value && (*endptr == '\0' || isspace(*endptr)))
+		return 0;
+
+	// If t he filter member is the 'type=' one:
+
+	if (list_empty(&type->type_enum) || type->type_member != filter->left) {
+		if (global_verbose)
+			fprintf(stderr, "Symbolic right operand in '%s' but no way to resolve it to a number (type= + type_enum= so far)\n", sfilter);
+		return -1;
+	}
+
+	enumerations__calc_prefix(&type->type_enum);
+
+	int64_t enumerator_value = enumerations__lookup_enumerator(&type->type_enum, value);
+
+	if (enumerator_value < 0) {
+		if (global_verbose)
+			fprintf(stderr, "Couldn't resolve right operand ('%s') in '%s' with the specified 'type=%s' and type_enum' \n",
+				value, sfilter, class_member__name(type->type_member, cu));
+		return -1;
+	}
+
+	filter->right = enumerator_value;
+
+	return 0;
+}
+
+static struct class_member_filter *class_member_filter__new(struct type *type, struct cu *cu, char *sfilter)
+{
+	struct class_member_filter *filter = malloc(sizeof(*filter));
+
+	if (filter && class_member_filter__parse(filter, type, cu, sfilter)) {
+		free(filter);
+		filter = NULL;
+	}
+
+	return filter;
+}
+
+static struct prototype *prototype__new(const char *expression)
+{
+	struct prototype *prototype = zalloc(sizeof(*prototype) + strlen(expression) + 1);
+
+	if (prototype == NULL)
+		goto out_enomem;
+
+	strcpy(prototype->name, expression);
+
+	const char *name = prototype->name;
+
+	prototype->nr_args = 0;
+
+	char *args_open = strchr(name, '(');
+
+	if (!args_open)
+		goto out;
+
+	char *args_close = strchr(args_open, ')');
+
+	if (args_close == NULL)
+		goto out_no_closing_parens;
+
+	char *args = args_open;
+
+	*args++ = *args_close = '\0';
+
+	while (isspace(*args))
+		++args;
+
+	if (args == args_close)
+		goto out; // empty args, just ignore the parens, i.e. 'foo()'
+next_arg:
+{
+	char *comma = strchr(args, ','), *value;
+
+	if (comma)
+		*comma = '\0';
+
+	char *assign = strchr(args, '=');
+
+	if (assign == NULL) {
+		if (strcmp(args, "sizeof") == 0) {
+			value = "size";
+			goto do_sizeof;
+		} else if (strcmp(args, "type") == 0) {
+			value = "type";
+			goto do_type;
+		}
+		goto out_missing_assign;
+	}
+
+	// accept foo==bar as filter=foo==bar
+	if (assign[1] == '=') {
+		value = args;
+		goto do_filter;
+	}
+
+	*assign = 0;
+
+	value = assign + 1;
+
+	while (isspace(*value))
+		++value;
+
+	if (value == args_close)
+		goto out_missing_value;
+
+	if (strcmp(args, "sizeof") == 0) {
+do_sizeof:
+		if (global_verbose)
+			printf("pahole: sizeof_operator for '%s' is '%s'\n", name, value);
+
+		prototype->size = value;
+	} else if (strcmp(args, "type") == 0) {
+do_type:
+		if (global_verbose)
+			printf("pahole: type member for '%s' is '%s'\n", name, value);
+
+		prototype->type = value;
+	} else if (strcmp(args, "type_enum") == 0) {
+		if (global_verbose)
+			printf("pahole: type enum for '%s' is '%s'\n", name, value);
+		prototype->type_enum = value;
+	} else if (strcmp(args, "filter") == 0) {
+do_filter:
+		if (global_verbose)
+			printf("pahole: filter for '%s' is '%s'\n", name, value);
+
+		prototype->filter = value;
+	} else if (strcmp(args, "range") == 0) {
+		if (global_verbose)
+			printf("pahole: range for '%s' is '%s'\n", name, value);
+		prototype->range = value;
+	} else
+		goto out_invalid_arg;
+
+	++prototype->nr_args;
+
+	if (comma) {
+		args = comma + 1;
+		goto next_arg;
+	}
+}
+out:
+	return prototype;
+
+out_enomem:
+	fprintf(stderr, "pahole: not enough memory for '%s'\n", expression);
+	goto out;
+
+out_invalid_arg:
+	fprintf(stderr, "pahole: invalid arg '%s' in '%s' (known args: sizeof=member, type=member, type_enum=enum)\n", args, expression);
+	goto out_free;
+
+out_missing_value:
+	fprintf(stderr, "pahole: invalid, missing value in '%s'\n", expression);
+	goto out_free;
+
+out_no_closing_parens:
+	fprintf(stderr, "pahole: invalid, no closing parens in '%s'\n", expression);
+	goto out_free;
+
+out_missing_assign:
+	fprintf(stderr, "pahole: invalid, missing '=' in '%s'\n", args);
+	goto out_free;
+
+out_free:
+	free(prototype);
+	return NULL;
+}
+
+#ifdef DEBUG_CHECK_LEAKS
+static void prototype__delete(struct prototype *prototype)
+{
+	if (prototype) {
+		memset(prototype, 0xff, sizeof(*prototype));
+		free(prototype);
+	}
+}
+#endif
+
+static struct tag_cu_node *tag_cu_node__new(struct tag *tag, struct cu *cu)
+{
+	struct tag_cu_node *tc = malloc(sizeof(*tc));
+
+	if (tc) {
+		tc->tc.tag = tag;
+		tc->tc.cu  = cu;
+	}
+
+	return tc;
+}
+
+static int type__add_type_enum(struct type *type, struct tag *type_enum, struct cu *cu)
+{
+	struct tag_cu_node *tc = tag_cu_node__new(type_enum, cu);
+
+	if (!tc)
+		return -1;
+
+	list_add_tail(&tc->node, &type->type_enum);
+	return 0;
+}
+
+static int type__find_type_enum(struct type *type, struct cu *cu, const char *type_enum)
+{
+	struct tag *te = cu__find_enumeration_by_name(cu, type_enum, NULL);
+
+	if (te)
+		return type__add_type_enum(type, te, cu);
+
+	// Now look at a 'virtual enum', i.e. the concatenation of multiple enums
+	char *sep = strchr(type_enum, '+');
+
+	if (!sep)
+		return -1;
+
+	char *type_enums = strdup(type_enum);
+
+	if (!type_enums)
+		return -1;
+
+	int ret = -1;
+
+	sep = type_enums + (sep - type_enum);
+
+	type_enum = type_enums;
+	*sep = '\0';
+
+	while (1) {
+		te = cu__find_enumeration_by_name(cu, type_enum, NULL);
+
+		if (!te)
+			goto out;
+
+		ret = type__add_type_enum(type, te, cu);
+		if (ret)
+			goto out;
+
+		if (sep == NULL)
+			break;
+		type_enum = sep + 1;
+		sep = strchr(type_enum, '+');
+	}
+
+	ret = 0;
+out:
+	free(type_enums);
+	return ret;
+}
+
+static struct type_instance *header;
+
 static enum load_steal_kind pahole_stealer(struct cu *cu,
 					   struct conf_load *conf_load __unused)
 {
@@ -1206,7 +2363,8 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		goto filter_it;
 
 	if (btf_encode) {
-		cu__encode_btf(cu, global_verbose);
+		cu__encode_btf(cu, global_verbose, btf_encode_force,
+			       skip_encoding_btf_vars);
 		return LSK__KEEPIT;
 	}
 
@@ -1233,35 +2391,90 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		goto dump_it;
 	}
 
-	struct str_node *pos;
-	struct rb_node *next = rb_first(&class_names->entries);
+	if (header == NULL && conf.header_type) {
+		header = type_instance__new(tag__type(cu__find_type_by_name(cu, conf.header_type, false, NULL)), cu);
+		if (header)
+			ret = LSK__KEEPIT;
+	}
 
-	while (next) {
-		pos = rb_entry(next, struct str_node, rb_node);
-		next = rb_next(&pos->rb_node);
+	bool include_decls = find_pointers_in_structs != 0 || stats_formatter == nr_methods_formatter;
+	struct prototype *prototype, *n;
+
+	list_for_each_entry_safe(prototype, n, &class_names, node) {
+
+		/* See if we already found it */
+		if (prototype->class) {
+			if (prototype->type_enum && !prototype->type_enum_resolved)
+				prototype->type_enum_resolved = type__find_type_enum(tag__type(prototype->class), cu, prototype->type_enum) == 0;
+			continue;
+		}
 
 		static type_id_t class_id;
-		bool include_decls = find_pointers_in_structs != 0 ||
-				     stats_formatter == nr_methods_formatter;
-		struct tag *class = cu__find_type_by_name(cu, pos->s, include_decls, &class_id);
-		if (class == NULL) {
-			class = cu__find_base_type_by_name(cu, pos->s, &class_id);
-			if (class == NULL) {
-				if (strcmp(pos->s, "void"))
-					continue;
-				class_id = 0;
+		struct tag *class = cu__find_type_by_name(cu, prototype->name, include_decls, &class_id);
+
+		if (class == NULL)
+			return ret; // couldn't find that class name in this CU, continue to the next one.
+
+		if (prototype->nr_args != 0 && !tag__is_struct(class)) {
+			fprintf(stderr, "pahole: attributes are only supported with 'class' and 'struct' types\n");
+			goto dump_and_stop;
+		}
+
+		struct type *type = tag__type(class);
+
+		if (prototype->size) {
+			type->sizeof_member = type__find_member_by_name(type, cu, prototype->size);
+			if (type->sizeof_member == NULL) {
+				fprintf(stderr, "pahole: the sizeof member '%s' wasn't found in the '%s' type\n",
+					prototype->size, prototype->name);
+				goto dump_and_stop;
 			}
 		}
+
+		if (prototype->type) {
+			type->type_member = type__find_member_by_name(type, cu, prototype->type);
+			if (type->type_member == NULL) {
+				fprintf(stderr, "pahole: the type member '%s' wasn't found in the '%s' type\n",
+					prototype->type, prototype->name);
+				goto dump_and_stop;
+			}
+		}
+
+		if (prototype->type_enum) {
+			prototype->type_enum_resolved = type__find_type_enum(type, cu, prototype->type_enum) == 0;
+		}
+
+		if (prototype->filter) {
+			type->filter = class_member_filter__new(type, cu, prototype->filter);
+			if (type->filter == NULL) {
+				fprintf(stderr, "pahole: invalid filter '%s' for '%s'\n",
+					prototype->filter, prototype->name);
+				goto dump_and_stop;
+			}
+		}
+
+		if (class == NULL) {
+			if (strcmp(prototype->name, "void"))
+				continue;
+			class_id = 0;
+		}
+
+		if (!isatty(0)) {
+			prototype->class = class;
+			prototype->cu	 = cu;
+			continue;
+		}
+
+		/*
+		 * Ok, found it, so remove from the list to avoid printing it
+		 * twice, in another CU.
+		 */
+		list_del_init(&prototype->node);
 
 		if (defined_in) {
 			puts(cu->name);
 			goto dump_it;
 		}
-		/*
-		 * Ok, found it, so remove from the list to avoid printing it
-		 * twice, in another CU.
-		 */
-		strlist__remove(class_names, pos);
 
 		if (class)
 			class__find_holes(tag__class(class));
@@ -1282,10 +2495,29 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		}
 	}
 
+	// If we got here with pretty printing is because we have everything solved except for type_enum
+
+	if (!isatty(0)) {
+		// Check if we need to continue loading CUs to get those type_enum= resolved
+		list_for_each_entry(prototype, &class_names, node) {
+			if (prototype->type_enum && !prototype->type_enum_resolved)
+				return LSK__KEEPIT;
+		}
+
+		// All set, pretty print it!
+		list_for_each_entry_safe(prototype, n, &class_names, node) {
+			list_del_init(&prototype->node);
+			if (prototype__stdio_fprintf_value(prototype, header, stdout) < 0)
+				break;
+		}
+
+		return LSK__STOP_LOADING;
+	}
+
 	/*
 	 * If we found all the entries in --class_name, stop
 	 */
-	if (strlist__empty(class_names)) {
+	if (list_empty(&class_names)) {
 dump_and_stop:
 		ret = LSK__STOP_LOADING;
 	}
@@ -1296,12 +2528,60 @@ filter_it:
 	return ret;
 }
 
+static int prototypes__add(struct list_head *prototypes, const char *entry)
+{
+	struct prototype *prototype = prototype__new(entry);
+
+	if (prototype == NULL)
+		return -ENOMEM;
+
+	list_add_tail(&prototype->node, prototypes);
+	return 0;
+}
+
+#ifdef DEBUG_CHECK_LEAKS
+static void prototypes__delete(struct list_head *prototypes)
+{
+	struct prototype *prototype, *n;
+
+	list_for_each_entry_safe(prototype, n, prototypes, node) {
+		list_del_init(&prototype->node);
+		prototype__delete(prototype);
+	}
+}
+#endif
+
+static int prototypes__load(struct list_head *prototypes, const char *filename)
+{
+	char entry[1024];
+	int err = -1;
+	FILE *fp = fopen(filename, "r");
+
+	if (fp == NULL)
+		return -1;
+
+	while (fgets(entry, sizeof(entry), fp) != NULL) {
+		const size_t len = strlen(entry);
+
+		if (len == 0)
+			continue;
+		entry[len - 1] = '\0';
+		if (prototypes__add(&class_names, entry))
+			goto out;
+	}
+
+	err = 0;
+out:
+	fclose(fp);
+	return err;
+}
+
 static int add_class_name_entry(const char *s)
 {
 	if (strncmp(s, "file://", 7) == 0) {
-		if (strlist__load(class_names, s + 7))
+		if (prototypes__load(&class_names, s + 7))
 			return -1;
-	} else switch (strlist__add(class_names, s)) {
+	} else switch (prototypes__add(&class_names, s)) {
 	case -EEXIST:
 		if (global_verbose)
 			fprintf(stderr,
@@ -1315,31 +2595,70 @@ static int add_class_name_entry(const char *s)
 
 static int populate_class_names(void)
 {
-	char *s = class_name, *sep;
+	char *s = strdup(class_name), *sep;
+	char *sdup = s, *end = s + strlen(s);
+	int ret = 0;
 
+	if (!s) {
+		fprintf(stderr, "Not enough memory for populating class names ('%s')\n", class_name);
+		return -1;
+	}
+
+	/*
+	 * Commas inside parameters shouldn't be considered, as those don't
+	 * separate classes, but arguments to a particular class hack a simple
+	 * parser, but really this will end up needing lex/yacc...
+	 */
 	while ((sep = strchr(s, ',')) != NULL) {
+		char *parens = strchr(s, '(');
+
+		// perf_event_header(sizeof=size),a
+
+		if (parens && parens < sep) {
+			char *close_parens = strchr(parens, ')');
+			ret = -1;
+			if (!close_parens) {
+				fprintf(stderr, "Unterminated '(' in '%s'\n", class_name);
+				fprintf(stderr, "                     %*.s^\n", (int)(parens - sdup), "");
+				goto out_free;
+			}
+			if (close_parens > sep)
+				sep = close_parens + 1;
+		}
+
 		*sep = '\0';
-		if (add_class_name_entry(s))
-			return -1;
-		*sep = ',';
+		ret = add_class_name_entry(s);
+		if (ret)
+			goto out_free;
+
+		while (isspace(*sep))
+			++sep;
+
+		if (sep == end)
+			goto out_free;
+
 		s = sep + 1;
 	}
 
-	return *s ? add_class_name_entry(s) : 0;
+	ret = add_class_name_entry(s);
+out_free:
+	free(sdup);
+	return ret;
 }
 
 int main(int argc, char *argv[])
 {
 	int err, remaining, rc = EXIT_FAILURE;
 
+	if (!isatty(0))
+		conf.hex_fmt = 0;
+
 	if (argp_parse(&pahole__argp, argc, argv, 0, &remaining, NULL)) {
 		argp_help(&pahole__argp, stderr, ARGP_HELP_SEE, argv[0]);
 		goto out;
 	}
 
-	class_names = strlist__new(true);
-
-	if (class_names == NULL || dwarves__init(cacheline_size)) {
+	if (dwarves__init(cacheline_size)) {
 		fputs("pahole: insufficient memory\n", stderr);
 		goto out;
 	}
@@ -1354,13 +2673,20 @@ int main(int argc, char *argv[])
 
 	conf_load.steal = pahole_stealer;
 
+	// Make 'pahole --header type < file' a shorter form of 'pahole -C type --count 1 < file'
+	if (conf.header_type && !class_name && !isatty(0)) {
+		conf.count = 1;
+		class_name = conf.header_type;
+		conf.header_type = 0; // so that we don't read it and then try to read the -C type
+	}
+
 try_sole_arg_as_class_names:
 	if (class_name && populate_class_names())
 		goto out_dwarves_exit;
 
 	err = cus__load_files(cus, &conf_load, argv + remaining);
 	if (err != 0) {
-		if (class_name == NULL) {
+		if (class_name == NULL && !btf_encode && !ctf_encode) {
 			class_name = argv[remaining];
 			remaining = argc;
 			goto try_sole_arg_as_class_names;
@@ -1368,6 +2694,43 @@ try_sole_arg_as_class_names:
 		cus__fprintf_load_files_err(cus, "pahole", argv + remaining, err, stderr);
 		goto out_cus_delete;
 	}
+
+	if (!list_empty(&class_names)) {
+		struct prototype *prototype;
+
+		list_for_each_entry(prototype, &class_names, node) {
+			if (prototype->class == NULL) {
+				fprintf(stderr, "pahole: type '%s' not found%s\n", prototype->name,
+					prototype->nr_args ? " or arguments not validated" : "");
+				break;
+			} else {
+				struct type *type = tag__type(prototype->class);
+
+				if (prototype->type && !type->type_member) {
+					fprintf(stderr, "pahole: member 'type=%s' not found in '%s' type\n",
+						prototype->type, prototype->name);
+				}
+
+				if (prototype->size && !type->sizeof_member) {
+					fprintf(stderr, "pahole: member 'sizeof=%s' not found in '%s' type\n",
+						prototype->size, prototype->name);
+				}
+
+				if (prototype->filter && !type->filter) {
+					fprintf(stderr, "pahole: filter 'filter=%s' couldn't be evaluated for '%s' type\n",
+						prototype->filter, prototype->name);
+				}
+
+				if (prototype->type_enum && !prototype->type_enum_resolved) {
+					fprintf(stderr, "pahole: 'type_enum=%s' couldn't be evaluated for '%s' type\n",
+						prototype->type_enum, prototype->name);
+				}
+			}
+		}
+	}
+
+	type_instance__delete(header);
+	header = NULL;
 
 	if (btf_encode) {
 		err = btf_encoder__encode();
@@ -1391,7 +2754,7 @@ out_dwarves_exit:
 #endif
 out:
 #ifdef DEBUG_CHECK_LEAKS
-	strlist__delete(class_names);
+	prototypes__delete(&class_names);
 #endif
 	return rc;
 }

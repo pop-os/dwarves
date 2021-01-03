@@ -48,7 +48,7 @@ static void str_node__delete(struct str_node *snode, bool dupstr)
 	free(snode);
 }
 
-int strlist__add(struct strlist *slist, const char *new_entry)
+int __strlist__add(struct strlist *slist, const char *new_entry, void *priv)
 {
         struct rb_node **p = &slist->entries.rb_node;
         struct rb_node *parent = NULL;
@@ -76,7 +76,16 @@ int strlist__add(struct strlist *slist, const char *new_entry)
         rb_link_node(&sn->rb_node, parent, p);
         rb_insert_color(&sn->rb_node, &slist->entries);
 
+	sn->priv = priv;
+
+	list_add_tail(&sn->node, &slist->list_entries);
+
 	return 0;
+}
+
+int strlist__add(struct strlist *slist, const char *new_entry)
+{
+	return __strlist__add(slist, new_entry, NULL);
 }
 
 int strlist__load(struct strlist *slist, const char *filename)
@@ -111,6 +120,7 @@ struct strlist *strlist__new(bool dupstr)
 
 	if (slist != NULL) {
 		slist->entries = RB_ROOT;
+		INIT_LIST_HEAD(&slist->list_entries);
 		slist->dupstr = dupstr;
 	}
 
@@ -136,6 +146,7 @@ void strlist__delete(struct strlist *slist)
 void strlist__remove(struct strlist *slist, struct str_node *sn)
 {
 	rb_erase(&sn->rb_node, &slist->entries);
+	list_del_init(&sn->node);
 	str_node__delete(sn, slist->dupstr);
 }
 
@@ -183,4 +194,14 @@ Elf_Scn *elf_section_by_name(Elf *elf, GElf_Ehdr *ep,
 	}
 
 	return sec;
+}
+
+char *strlwr(char *s)
+{
+	int len = strlen(s), i;
+
+	for (i = 0; i < len; ++i)
+		s[i] = tolower(s[i]);
+
+	return s;
 }
