@@ -1,3 +1,2 @@
-Test-Command: pahole /usr/bin/pahole
-Depends: dwarves-dbgsym
-Restrictions: skip-not-installable
+Test-Command: pahole --version
+Restrictions: superficial

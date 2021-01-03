@@ -17,6 +17,8 @@ dwarves-dfsg (1.18-1) unstable; urgency=medium
   * Fix typo in pahole manual page.
   * Fix escaping in pahole manual page.
   * Fix debian/copyright lintian errors.
+  * Revert test to a superficial pahole --version until partial units
+    become supported.
 
   [ Luca Boccassi ]
   * Use packaged libbpf instead of the statically linked. Closes: #979105.
