@@ -1,0 +1,20 @@
+Description: Fix escaping in the pahole manual page
+Forwarded: https://github.com/acmel/dwarves/pull/17
+
+---
+ man-pages/pahole.1 |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: b/man-pages/pahole.1
+===================================================================
+--- a/man-pages/pahole.1
++++ b/man-pages/pahole.1
+@@ -708,7 +708,7 @@ $ pahole ~/bin/perf --header=perf_file_h
+ 		.size = 88,
+ 	},
+ 	.id = 13,
+-	.path = "/machine.slice/machine-qemu\x2d1\x2drhel6.sandy.scope",
++	.path = "/machine.slice/machine-qemu\\x2d1\\x2drhel6.sandy.scope",
+ },
+ $ 
+ .fi
