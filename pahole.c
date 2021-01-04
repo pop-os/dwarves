@@ -22,12 +22,15 @@
 #include "dutil.h"
 #include "ctf_encoder.h"
 #include "btf_encoder.h"
+#include "libbtf.h"
+#include "lib/bpf/src/libbpf.h"
 
 static bool btf_encode;
 static bool ctf_encode;
 static bool first_obj_only;
 static bool skip_encoding_btf_vars;
 static bool btf_encode_force;
+static const char *base_btf_file;
 
 static uint8_t class__include_anonymous;
 static uint8_t class__include_nested_anonymous;
@@ -59,6 +62,7 @@ static bool show_private_classes;
 static bool defined_in;
 static bool just_unions;
 static bool just_structs;
+static bool just_packed_structs;
 static int show_reorg_steps;
 static const char *class_name;
 static LIST_HEAD(class_names);
@@ -370,6 +374,12 @@ static struct class *class__filter(struct class *class, struct cu *cu,
 
 	if (just_structs && !tag__is_struct(tag))
 		return NULL;
+
+	if (just_packed_structs) {
+		/* Is it not packed? */
+		if (!class__infer_packed_attributes(class, cu))
+			return NULL;
+	}
 
 	if (!tag->top_level) {
 		class__find_holes(class);
@@ -812,6 +822,9 @@ ARGP_PROGRAM_VERSION_HOOK_DEF = dwarves_print_version;
 #define ARGP_range		   316
 #define ARGP_skip_encoding_btf_vars 317
 #define ARGP_btf_encode_force	   318
+#define ARGP_just_packed_structs   319
+#define ARGP_numeric_version       320
+#define ARGP_btf_base		   321
 
 static const struct argp_option pahole__options[] = {
 	{
@@ -1086,6 +1099,12 @@ static const struct argp_option pahole__options[] = {
 		.doc  = "Print offsets and sizes in hexadecimal",
 	},
 	{
+		.name = "btf_base",
+		.key  = ARGP_btf_base,
+		.arg  = "PATH",
+		.doc  = "Path to the base BTF file",
+	},
+	{
 		.name = "btf_encode",
 		.key  = 'J',
 		.doc  = "Encode as BTF",
@@ -1109,6 +1128,16 @@ static const struct argp_option pahole__options[] = {
 		.name = "unions",
 		.key  = ARGP_just_unions,
 		.doc  = "Show just unions",
+	},
+	{
+		.name = "packed",
+		.key  = ARGP_just_packed_structs,
+		.doc  = "Show just packed structs",
+	},
+	{
+		.name = "numeric_version",
+		.key  = ARGP_numeric_version,
+		.doc  = "Print a numeric version, i.e. 119 instead of v1.19"
 	},
 	{
 		.name = NULL,
@@ -1202,6 +1231,9 @@ static error_t pahole__options_parser(int key, char *arg,
 		just_unions = true;			break;
 	case ARGP_just_structs:
 		just_structs = true;			break;
+	case ARGP_just_packed_structs:
+		just_structs = true;
+		just_packed_structs = true;		break;
 	case ARGP_count:
 		conf.count = atoi(arg);			break;
 	case ARGP_skip:
@@ -1218,6 +1250,10 @@ static error_t pahole__options_parser(int key, char *arg,
 		skip_encoding_btf_vars = true;		break;
 	case ARGP_btf_encode_force:
 		btf_encode_force = true;		break;
+	case ARGP_btf_base:
+		base_btf_file = arg;			break;
+	case ARGP_numeric_version:
+		print_numeric_version = true;		break;
 	default:
 		return ARGP_ERR_UNKNOWN;
 	}
@@ -2363,9 +2399,12 @@ static enum load_steal_kind pahole_stealer(struct cu *cu,
 		goto filter_it;
 
 	if (btf_encode) {
-		cu__encode_btf(cu, global_verbose, btf_encode_force,
-			       skip_encoding_btf_vars);
-		return LSK__KEEPIT;
+		if (cu__encode_btf(cu, global_verbose, btf_encode_force,
+				   skip_encoding_btf_vars)) {
+			fprintf(stderr, "Encountered error while encoding BTF.\n");
+			exit(1);
+		}
+		return LSK__DELETE;
 	}
 
 	if (ctf_encode) {
@@ -2658,9 +2697,27 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	if (print_numeric_version) {
+		dwarves_print_numeric_version(stdout);
+		return 0;
+	}
+
 	if (dwarves__init(cacheline_size)) {
 		fputs("pahole: insufficient memory\n", stderr);
 		goto out;
+	}
+
+	if (base_btf_file) {
+		base_btf = btf__parse(base_btf_file, NULL);
+		if (libbpf_get_error(base_btf)) {
+			fprintf(stderr, "Failed to parse base BTF '%s': %ld\n",
+				base_btf_file, libbpf_get_error(base_btf));
+			goto out;
+		}
+		if (!btf_encode && !ctf_encode) {
+			// Force "btf" since a btf_base is being informed
+			conf_load.format_path = "btf";
+		}
 	}
 
 	struct cus *cus = cus__new();
@@ -2684,10 +2741,31 @@ try_sole_arg_as_class_names:
 	if (class_name && populate_class_names())
 		goto out_dwarves_exit;
 
+	if (base_btf_file == NULL) {
+		const char *filename = argv[remaining];
+
+		if (filename &&
+		    strstarts(filename, "/sys/kernel/btf/") &&
+		    strstr(filename, "/vmlinux") == NULL) {
+			base_btf_file = "/sys/kernel/btf/vmlinux";
+			base_btf = btf__parse(base_btf_file, NULL);
+			if (libbpf_get_error(base_btf)) {
+				fprintf(stderr, "Failed to parse base BTF '%s': %ld\n",
+					base_btf_file, libbpf_get_error(base_btf));
+				goto out;
+			}
+		}
+	}
+
 	err = cus__load_files(cus, &conf_load, argv + remaining);
 	if (err != 0) {
 		if (class_name == NULL && !btf_encode && !ctf_encode) {
 			class_name = argv[remaining];
+			if (access(class_name, R_OK) == 0) {
+				fprintf(stderr, "pahole: file '%s' has no %s type information.\n",
+						class_name, conf_load.format_path ?: "supported");
+				goto out_dwarves_exit;
+			}
 			remaining = argc;
 			goto try_sole_arg_as_class_names;
 		}
@@ -2747,6 +2825,7 @@ out_cus_delete:
 #ifdef DEBUG_CHECK_LEAKS
 	cus__delete(cus);
 	structures__delete();
+	btf__free(base_btf);
 #endif
 out_dwarves_exit:
 #ifdef DEBUG_CHECK_LEAKS

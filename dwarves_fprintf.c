@@ -181,6 +181,8 @@ size_t tag__fprintf_decl_info(const struct tag *tag,
 	return 0;
 }
 
+static size_t __class__fprintf(struct class *class, const struct cu *cu,
+			       const struct conf_fprintf *conf, FILE *fp);
 static size_t type__fprintf(struct tag *type, const struct cu *cu,
 			    const char *name, const struct conf_fprintf *conf,
 			    FILE *fp);
@@ -316,6 +318,22 @@ size_t typedef__fprintf(const struct tag *tag, const struct cu *cu,
 			return fprintf(fp, "typedef struct %s %s",
 				       type__name(ctype, cu),
 				       type__name(type, cu));
+
+		struct conf_fprintf tconf = *pconf;
+
+		tconf.suffix = type__name(type, cu);
+		return fprintf(fp, "typedef ") + __class__fprintf(tag__class(tag_type), cu, &tconf, fp);
+	}
+	case DW_TAG_enumeration_type: {
+		struct type *ctype = tag__type(tag_type);
+
+		if (type__name(ctype, cu) != NULL)
+			return fprintf(fp, "typedef enum %s %s", type__name(ctype, cu), type__name(type, cu));
+
+		struct conf_fprintf tconf = *pconf;
+
+		tconf.suffix = type__name(type, cu);
+		return fprintf(fp, "typedef ") + enumeration__fprintf(tag_type, cu, &tconf, fp);
 	}
 	}
 
@@ -352,11 +370,29 @@ static size_t imported_module__fprintf(const struct tag *tag,
 	return fprintf(fp, "using namespace %s", name);
 }
 
+int enumeration__max_entry_name_len(struct type *type, const struct cu *cu)
+{
+	if (type->max_tag_name_len)
+		goto out;
+
+	struct enumerator *pos;
+
+	type__for_each_enumerator(type, pos) {
+		int len = strlen(enumerator__name(pos, cu));
+
+		if (type->max_tag_name_len < len)
+			type->max_tag_name_len = len;
+	}
+out:
+	return type->max_tag_name_len;
+}
+
 size_t enumeration__fprintf(const struct tag *tag, const struct cu *cu,
 			    const struct conf_fprintf *conf, FILE *fp)
 {
 	struct type *type = tag__type(tag);
 	struct enumerator *pos;
+	int max_entry_name_len = enumeration__max_entry_name_len(type, cu);
 	size_t printed = fprintf(fp, "enum%s%s {\n",
 				 type__name(type, cu) ? " " : "",
 				 type__name(type, cu) ?: "");
@@ -366,8 +402,8 @@ size_t enumeration__fprintf(const struct tag *tag, const struct cu *cu,
 		indent = sizeof(tabs) - 1;
 
 	type__for_each_enumerator(type, pos)
-		printed += fprintf(fp, "%.*s\t%s = %u,\n", indent, tabs,
-				   enumerator__name(pos, cu), pos->value);
+		printed += fprintf(fp, "%.*s\t%-*s = %u,\n", indent, tabs,
+				   max_entry_name_len, enumerator__name(pos, cu), pos->value);
 
 	printed += fprintf(fp, "%.*s}", indent, tabs);
 
@@ -594,9 +630,6 @@ static size_t type__fprintf_stats(struct type *type, const struct cu *cu,
 
 static size_t union__fprintf(struct type *type, const struct cu *cu,
 			     const struct conf_fprintf *conf, FILE *fp);
-
-static size_t __class__fprintf(struct class *class, const struct cu *cu,
-			       const struct conf_fprintf *conf, FILE *fp);
 
 static size_t type__fprintf(struct tag *type, const struct cu *cu,
 			    const char *name, const struct conf_fprintf *conf,

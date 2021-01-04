@@ -23,10 +23,14 @@
 #include "list.h"
 #include "dwarves.h"
 #include "dutil.h"
-#include "strings.h"
+#include "pahole_strings.h"
 #include "hash.h"
 
 struct strings *strings;
+
+#ifndef DW_AT_alignment
+#define DW_AT_alignment 0x88
+#endif
 
 #ifndef DW_AT_GNU_vector
 #define DW_AT_GNU_vector 0x2107
@@ -89,7 +93,7 @@ static void dwarf_tag__set_spec(struct dwarf_tag *dtag, dwarf_off_ref spec)
 	*(dwarf_off_ref *)(dtag + 1) = spec;
 }
 
-#define HASHTAGS__BITS 8
+#define HASHTAGS__BITS 15
 #define HASHTAGS__SIZE (1UL << HASHTAGS__BITS)
 
 #define obstack_chunk_alloc malloc
@@ -2155,7 +2159,7 @@ static unsigned long long dwarf_tag__orig_id(const struct tag *tag,
 static const char *dwarf__strings_ptr(const struct cu *cu __unused,
 				      strings_t s)
 {
-	return strings__ptr(strings, s);
+	return s ? strings__ptr(strings, s) : NULL;
 }
 
 struct debug_fmt_ops dwarf__ops;
@@ -2171,7 +2175,7 @@ static int die__process(Dwarf_Die *die, struct cu *cu)
 		if (!warned) {
 			fprintf(stderr, "WARNING: DW_TAG_partial_unit used, some types will not be considered!\n"
 					"         Probably this was optimized using a tool like 'dwz'\n"
-					"         A future version of pahole will take support this.\n");
+					"         A future version of pahole will support this.\n");
 			warned = true;
 		}
 		return 0; // so that other units can be processed

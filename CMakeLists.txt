@@ -2,7 +2,9 @@ project(pahole C)
 cmake_minimum_required(VERSION 2.8.8)
 cmake_policy(SET CMP0005 NEW)
 
-INCLUDE_DIRECTORIES( ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} )
+INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}
+		    ${CMAKE_CURRENT_SOURCE_DIR}
+		    ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
 
 # Try to parse this later, Helio just showed me a KDE4 example to support
 # x86-64 builds.
@@ -30,7 +32,10 @@ endif (NOT CMAKE_BUILD_TYPE)
 set(CMAKE_C_FLAGS_DEBUG "-Wall -Werror -ggdb -O0")
 set(CMAKE_C_FLAGS_RELEASE "-Wall -O2")
 
-add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.18")
+# Just for grepping, DWARVES_VERSION isn't used anywhere anymore
+# add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.19")
+add_definitions(-D_GNU_SOURCE -DDWARVES_MAJOR_VERSION=1)
+add_definitions(-D_GNU_SOURCE -DDWARVES_MINOR_VERSION=19)
 find_package(DWARF REQUIRED)
 find_package(ZLIB REQUIRED)
 
@@ -149,7 +154,7 @@ install(TARGETS codiff ctracer dtagnames pahole pdwtags
 install(TARGETS dwarves LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 install(TARGETS dwarves dwarves_emit dwarves_reorganize LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 install(FILES dwarves.h dwarves_emit.h dwarves_reorganize.h
-	      dutil.h gobuffer.h list.h rbtree.h strings.h
+	      dutil.h gobuffer.h list.h rbtree.h pahole_strings.h
 	      btf_encoder.h config.h ctf_encoder.h ctf.h
 	      elfcreator.h elf_symtab.h hash.h libbtf.h libctf.h
 	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/dwarves/)

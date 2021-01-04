@@ -18,7 +18,7 @@
 #include "dutil.h"
 #include "list.h"
 #include "rbtree.h"
-#include "strings.h"
+#include "pahole_strings.h"
 
 struct cu;
 
@@ -211,6 +211,8 @@ struct debug_fmt_ops {
 	void		   (*cu__delete)(struct cu *cu);
 	bool		   has_alignment_info;
 };
+
+extern struct debug_fmt_ops *dwarves__active_loader;
 
 struct cu {
 	struct list_head node;
@@ -975,6 +977,7 @@ struct type {
 	struct list_head type_enum;
 	char 		 *member_prefix;
 	uint16_t	 member_prefix_len;
+	uint16_t	 max_tag_name_len;
 	uint16_t	 natural_alignment;
 	bool		 packed_attributes_inferred;
 	uint8_t		 declaration; /* only one bit used */
@@ -1099,6 +1102,7 @@ struct class_member *type__last_member(struct type *type);
 void enumeration__calc_prefix(struct type *type, const struct cu *cu);
 const char *enumeration__prefix(struct type *type, const struct cu *cu);
 uint16_t enumeration__prefix_len(struct type *type, const struct cu *cu);
+int enumeration__max_entry_name_len(struct type *type, const struct cu *cu);
 
 void enumerations__calc_prefix(struct list_head *enumerations);
 
@@ -1322,6 +1326,9 @@ const char *dwarf_tag_name(const uint32_t tag);
 struct argp_state;
 
 void dwarves_print_version(FILE *fp, struct argp_state *state);
+void dwarves_print_numeric_version(FILE *fp);
+
+extern bool print_numeric_version;;
 
 extern bool no_bitfield_type_recode;
 

@@ -182,8 +182,22 @@ the debugging information.
 Do not encode VARs in BTF.
 
 .TP
+.B \-J, \-\-btf_encode
+Encode BTF information from DWARF, used in the Linux kernel build process when
+CONFIG_DEBUG_INFO_BTF=y is present, introduced in Linux v5.2. Used to implement
+features such as BPF CO-RE (Compile Once - Run Everywhere).
+
+See \fIhttps://nakryiko.com/posts/bpf-portability-and-co-re/\fR.
+
+.TP
 .B \-\-btf_encode_force
 Ignore those symbols found invalid when encoding BTF.
+
+.TP
+.B \-\-btf_base=PATH
+Path to the base BTF file, for instance: vmlinux when encoding kernel module BTF information.
+This may be inferred when asking for a /sys/kernel/btf/MODULE, when it will be autoconfigured
+to "/sys/kernel/btf/vmlinux".
 
 .TP
 .B \-l, \-\-show_first_biggest_size_base_type_member
@@ -292,12 +306,26 @@ Show only structs with at least one hole greater or equal to HOLE_SIZE.
 .TP
 .B \-\-structs
 Show only structs, all the other filters apply, i.e. to show just the sizes of all structs
-coimbine --structs with --sizes, etc.
+combine --structs with --sizes, etc.
+
+.TP
+.B \-\-packed
+Show only packed structs, all the other filters apply, i.e. to show just the
+sizes of all packed structs combine --packed with --sizes, etc.
 
 .TP
 .B \-\-unions
 Show only unions, all the other filters apply, i.e. to show just the sizes of all unions
-coimbine --union with --sizes, etc.
+combine --union with --sizes, etc.
+
+.TP
+.B \-\-version
+Show a traditional string version, i.e.: "v1.18".
+
+.TP
+.B \-\-numeric_version
+Show a numeric only version, suitable for use in Makefiles and scripts where
+one wants to know what if the installed version has some feature, i.e.: 118 instead of "v1.18".
 
 .SH NOTES
 
