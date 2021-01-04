@@ -1,3 +1,40 @@
+dwarves-dfsg (1.19-1) unstable; urgency=high
+
+  * New upstream release. Closes: #978691.
+    Changes since 1.18:
+    - Support split BTF, where a main BTF file, vmlinux, can be used
+      to find types and then a kernel module, for instance, can have
+      just what is unique to it
+    - Update libbpf to get the split BTF support and use some of its
+      functions to load BTF and speed up DWARF loading and BTF encoding
+    - Support cross-compiled ELF binaries with different endianness
+    - Support showing typedefs for anonymous types, like structs,
+      unions and enums
+    - Align enumerators
+    - Workaround bugs in the generation of DWARF records for functions in
+      some gcc versions that were causing breakage in the encoding of BTF
+    - Ignore zero-sized ELF symbols instead of erroring out
+    - Handle union forward declaration properly in the BTF loader
+    - Introduce --numeric_version for use in scripts and Makefiles
+    - Try sole pfunct argument as a function name, just like pahole
+      with type names
+    - Speed up pfunct using some of the load techniques used in pahole
+    - Discard CUs after BTF encoding as they're not used anymore,
+      greatly reducing memory usage and speeding up vmlinux BTF encoding
+    - Revamp how per-CPU variables are encoded in BTF
+    - Include BTF info for static functions
+    - Use BTF's string APIs for strings management, greatly improving
+      performance over the tsearch()
+    - Increase size of DWARF lookup hash table, shaving off about 1
+      second out of about 20 seconds total for Linux BTF dedup
+    - Stop BTF encoding when errors are found in some DWARF CU
+    - Implement --packed, to show just packed structures, for instance,
+      here are the top 5 packed data structures in the Linux kernel
+    - Fix bug in distros such as OpenSUSE:15.2 where DW_AT_alignment
+      isn't defined
+
+ -- Domenico Andreoli <cavok@debian.org>  Mon, 04 Jan 2021 23:33:54 +0100
+
 dwarves-dfsg (1.18-1) unstable; urgency=medium
 
   [ Domenico Andreoli ]
