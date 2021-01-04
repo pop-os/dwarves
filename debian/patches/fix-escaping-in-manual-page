@@ -9,7 +9,7 @@ Index: b/man-pages/pahole.1
 ===================================================================
 --- a/man-pages/pahole.1
 +++ b/man-pages/pahole.1
-@@ -708,7 +708,7 @@ $ pahole ~/bin/perf --header=perf_file_h
+@@ -736,7 +736,7 @@ $ pahole ~/bin/perf --header=perf_file_h
  		.size = 88,
  	},
  	.id = 13,

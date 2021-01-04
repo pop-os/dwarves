@@ -4,9 +4,18 @@ Description: libbpf: allow one to use packaged version
  embedded version and the system version (searched via pkg-config)
  of libbpf. Set the system version as the default.
 Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
+---
+ CMakeLists.txt |   43 +++++++++++++++++++++++++++++++++----------
+ btf_encoder.c  |    4 ++++
+ btf_loader.c   |    4 ++++
+ libbtf.c       |    8 +++++++-
+ 4 files changed, 48 insertions(+), 11 deletions(-)
+
+Index: b/CMakeLists.txt
+===================================================================
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -2,6 +2,19 @@
+@@ -2,6 +2,20 @@ project(pahole C)
  cmake_minimum_required(VERSION 2.8.8)
  cmake_policy(SET CMP0005 NEW)
  
@@ -23,10 +32,11 @@ Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
 +	LINK_DIRECTORIES(${LIBBPF_LIBRARY_DIRS})
 +	ADD_DEFINITIONS(-DLIBBPF_FOUND)
 +endif()
- INCLUDE_DIRECTORIES( ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR} )
- 
- # Try to parse this later, Helio just showed me a KDE4 example to support
-@@ -76,20 +89,29 @@
++
+ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}
+ 		    ${CMAKE_CURRENT_SOURCE_DIR}
+ 		    ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
+@@ -81,20 +95,29 @@ endif()
  
  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64")
  
@@ -66,6 +76,8 @@ Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
  
  set(dwarves_emit_LIB_SRCS dwarves_emit.c)
  add_library(dwarves_emit STATIC ${dwarves_emit_LIB_SRCS})
+Index: b/btf_encoder.c
+===================================================================
 --- a/btf_encoder.c
 +++ b/btf_encoder.c
 @@ -11,7 +11,11 @@
@@ -77,9 +89,11 @@ Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
 +#else
  #include "lib/bpf/include/uapi/linux/btf.h"
 +#endif
+ #include "lib/bpf/src/libbpf.h"
  #include "hash.h"
  #include "elf_symtab.h"
- #include "btf_encoder.h"
+Index: b/btf_loader.c
+===================================================================
 --- a/btf_loader.c
 +++ b/btf_loader.c
 @@ -25,7 +25,11 @@
@@ -94,6 +108,8 @@ Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
  #include "dutil.h"
  #include "dwarves.h"
  
+Index: b/libbtf.c
+===================================================================
 --- a/libbtf.c
 +++ b/libbtf.c
 @@ -18,10 +18,16 @@

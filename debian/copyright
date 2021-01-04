@@ -74,7 +74,7 @@ Files: pdwtags.c syscse.c
 Copyright: 2007-2016 Arnaldo Carvalho de Melo <acme@kernel.org>
 License: GPL-2.0-only
 
-Files: gobuffer.c gobuffer.h strings.c
+Files: gobuffer.c gobuffer.h strings.c pahole_strings.h
 Copyright: 2008 Arnaldo Carvalho de Melo <acme@redhat.com>
 License: GPL-2.0-only
 

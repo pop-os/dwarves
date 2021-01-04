@@ -33,6 +33,8 @@ dwarves-dfsg (1.19-1) unstable; urgency=high
     - Fix bug in distros such as OpenSUSE:15.2 where DW_AT_alignment
       isn't defined
 
+  * Refresh patches.
+
  -- Domenico Andreoli <cavok@debian.org>  Mon, 04 Jan 2021 23:33:54 +0100
 
 dwarves-dfsg (1.18-1) unstable; urgency=medium

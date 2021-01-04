@@ -22,7 +22,7 @@ Index: b/CMakeLists.txt
 ===================================================================
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -86,21 +86,17 @@ target_include_directories(bpf PRIVATE
+@@ -91,21 +91,17 @@ target_include_directories(bpf PRIVATE
  set(dwarves_LIB_SRCS dwarves.c dwarves_fprintf.c gobuffer strings
  		     ctf_encoder.c ctf_loader.c libctf.c btf_encoder.c btf_loader.c libbtf.c
  		     dwarf_loader.c dutil.c elf_symtab.c rbtree.c)
@@ -47,14 +47,14 @@ Index: b/CMakeLists.txt
  target_link_libraries(dwarves_reorganize dwarves)
  
  set(codiff_SRCS codiff.c)
-@@ -146,13 +142,6 @@ target_link_libraries(syscse dwarves)
+@@ -151,13 +147,6 @@ target_link_libraries(syscse dwarves)
  install(TARGETS codiff ctracer dtagnames pahole pdwtags
  		pfunct pglobal prefcnt scncopy syscse RUNTIME DESTINATION
  		${CMAKE_INSTALL_PREFIX}/bin)
 -install(TARGETS dwarves LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 -install(TARGETS dwarves dwarves_emit dwarves_reorganize LIBRARY DESTINATION ${LIB_INSTALL_DIR})
 -install(FILES dwarves.h dwarves_emit.h dwarves_reorganize.h
--	      dutil.h gobuffer.h list.h rbtree.h strings.h
+-	      dutil.h gobuffer.h list.h rbtree.h pahole_strings.h
 -	      btf_encoder.h config.h ctf_encoder.h ctf.h
 -	      elfcreator.h elf_symtab.h hash.h libbtf.h libctf.h
 -	DESTINATION ${CMAKE_INSTALL_PREFIX}/include/dwarves/)

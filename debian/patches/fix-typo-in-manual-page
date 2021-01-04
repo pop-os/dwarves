@@ -9,7 +9,7 @@ Index: b/man-pages/pahole.1
 ===================================================================
 --- a/man-pages/pahole.1
 +++ b/man-pages/pahole.1
-@@ -721,7 +721,7 @@ $ pahole ~/bin/perf --header=perf_file_h
+@@ -749,7 +749,7 @@ $ pahole ~/bin/perf --header=perf_file_h
  .P
  This uses ~/bin/perf to get the type definitions, the defines 'struct perf_file_header' as the header,
  then seeks '$header.data.offset' bytes from the start of the file, and considers '$header.data.size' bytes
