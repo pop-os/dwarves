@@ -11,11 +11,9 @@ Forwarded: https://www.spinics.net/lists/dwarves/msg00732.html
  libbtf.c       |    8 +++++++-
  4 files changed, 48 insertions(+), 11 deletions(-)
 
-Index: b/CMakeLists.txt
-===================================================================
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -2,6 +2,20 @@ project(pahole C)
+@@ -2,6 +2,20 @@
  cmake_minimum_required(VERSION 2.8.8)
  cmake_policy(SET CMP0005 NEW)
  
@@ -36,7 +34,7 @@ Index: b/CMakeLists.txt
  INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}
  		    ${CMAKE_CURRENT_SOURCE_DIR}
  		    ${CMAKE_CURRENT_SOURCE_DIR}/lib/bpf/include/uapi)
-@@ -81,20 +95,29 @@ endif()
+@@ -81,20 +95,29 @@
  
  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64")
  
@@ -76,24 +74,22 @@ Index: b/CMakeLists.txt
  
  set(dwarves_emit_LIB_SRCS dwarves_emit.c)
  add_library(dwarves_emit STATIC ${dwarves_emit_LIB_SRCS})
-Index: b/btf_encoder.c
-===================================================================
 --- a/btf_encoder.c
 +++ b/btf_encoder.c
-@@ -11,7 +11,11 @@
+@@ -11,8 +11,13 @@
  
  #include "dwarves.h"
  #include "libbtf.h"
 +#ifdef LIBBPF_FOUND
 +#include <linux/btf.h>
++#include <bpf/libbpf.h>
 +#else
  #include "lib/bpf/include/uapi/linux/btf.h"
-+#endif
  #include "lib/bpf/src/libbpf.h"
++#endif
  #include "hash.h"
  #include "elf_symtab.h"
-Index: b/btf_loader.c
-===================================================================
+ #include "btf_encoder.h"
 --- a/btf_loader.c
 +++ b/btf_loader.c
 @@ -25,7 +25,11 @@
@@ -108,8 +104,6 @@ Index: b/btf_loader.c
  #include "dutil.h"
  #include "dwarves.h"
  
-Index: b/libbtf.c
-===================================================================
 --- a/libbtf.c
 +++ b/libbtf.c
 @@ -18,10 +18,16 @@
@@ -122,11 +116,10 @@ Index: b/libbtf.c
 +#include <bpf/libbpf.h>
 +#else
  #include "lib/bpf/include/uapi/linux/btf.h"
--#include "lib/bpf/include/linux/err.h"
+ #include "lib/bpf/include/linux/err.h"
  #include "lib/bpf/src/btf.h"
  #include "lib/bpf/src/libbpf.h"
 +#endif
-+#include "lib/bpf/include/linux/err.h"
  #include "dutil.h"
  #include "gobuffer.h"
  #include "dwarves.h"
