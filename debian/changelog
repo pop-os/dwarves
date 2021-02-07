@@ -30,6 +30,8 @@ dwarves-dfsg (1.20-1) unstable; urgency=medium
     build:
         - Fix compilation on 32-bit architectures.
 
+  * Refresh patches.
+
  -- Domenico Andreoli <cavok@debian.org>  Sun, 07 Feb 2021 17:59:01 +0100
 
 dwarves-dfsg (1.19-1) unstable; urgency=high
