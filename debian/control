@@ -3,7 +3,7 @@ Priority: optional
 Maintainer: Thomas Girard <thomas.g.girard@free.fr>
 Uploaders: Domenico Andreoli <cavok@debian.org>
 Build-Depends: debhelper-compat (= 12), cmake (>= 2.4.8), zlib1g-dev, libelf-dev, libdw-dev (>= 0.141), libbpf-dev (>= 1:0.2~), pkg-config,
-Standards-Version: 4.5.0
+Standards-Version: 4.5.1
 Rules-Requires-Root: no
 Section: utils
 Vcs-Browser: https://salsa.debian.org/debian/dwarves
