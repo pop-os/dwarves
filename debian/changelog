@@ -34,6 +34,8 @@ dwarves-dfsg (1.20-1) unstable; urgency=medium
   * Remove ctfdwdiff and README.cross so to reuse upstream tarball as-is.
   * Update Standards-Version to 4.5.1
   * gbp: set upstream tarball compression to xz
+  * Add lintian override for orig-tarball-missing-upstream-signature,
+    see #882694.
 
  -- Domenico Andreoli <cavok@debian.org>  Sun, 07 Feb 2021 17:59:01 +0100
 
