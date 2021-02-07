@@ -110,8 +110,8 @@ try_as_raw_btf:
 
 		btfe->elf = elf_begin(btfe->in_fd, ELF_C_READ_MMAP, NULL);
 		if (!btfe->elf) {
-			fprintf(stderr, "%s: cannot read %s ELF file.\n",
-				__func__, filename);
+			fprintf(stderr, "%s: cannot read %s ELF file: %s.\n",
+				__func__, filename, elf_errmsg(elf_errno()));
 			goto errout;
 		}
 	}
@@ -170,6 +170,7 @@ try_as_raw_btf:
 	}
 	btfe->percpu_shndx = elf_ndxscn(sec);
 	btfe->percpu_base_addr = shdr.sh_addr;
+	btfe->percpu_sec_sz = shdr.sh_size;
 
 	return btfe;
 
@@ -416,7 +417,7 @@ int32_t btf_elf__add_ref_type(struct btf_elf *btfe, uint16_t kind, uint32_t type
 		id = btf__add_const(btf, type);
 		break;
 	case BTF_KIND_RESTRICT:
-		id = btf__add_const(btf, type);
+		id = btf__add_restrict(btf, type);
 		break;
 	case BTF_KIND_TYPEDEF:
 		id = btf__add_typedef(btf, name, type);
@@ -706,13 +707,15 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 	}
 
 	if (elf_version(EV_CURRENT) == EV_NONE) {
-		fprintf(stderr, "Cannot set libelf version.\n");
+		fprintf(stderr, "Cannot set libelf version: %s.\n",
+			elf_errmsg(elf_errno()));
 		goto out;
 	}
 
 	elf = elf_begin(fd, ELF_C_RDWR, NULL);
 	if (elf == NULL) {
-		fprintf(stderr, "Cannot update ELF file.\n");
+		fprintf(stderr, "Cannot update ELF file: %s.\n",
+			elf_errmsg(elf_errno()));
 		goto out;
 	}
 
@@ -720,7 +723,8 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 
 	ehdr = gelf_getehdr(elf, &ehdr_mem);
 	if (ehdr == NULL) {
-		fprintf(stderr, "%s: elf_getehdr failed.\n", __func__);
+		fprintf(stderr, "%s: elf_getehdr failed: %s.\n", __func__,
+			elf_errmsg(elf_errno()));
 		goto out;
 	}
 
@@ -763,6 +767,9 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 		if (elf_update(elf, ELF_C_NULL) >= 0 &&
 		    elf_update(elf, ELF_C_WRITE) >= 0)
 			err = 0;
+		else
+			fprintf(stderr, "%s: elf_update failed: %s.\n",
+				__func__, elf_errmsg(elf_errno()));
 	} else {
 		const char *llvm_objcopy;
 		char tmp_fn[PATH_MAX];
@@ -785,18 +792,19 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 		if (write(fd, raw_btf_data, raw_btf_size) != raw_btf_size) {
 			fprintf(stderr, "%s: write of %d bytes to '%s' failed: %d!\n",
 				__func__, raw_btf_size, tmp_fn, errno);
-			goto out;
+			goto unlink;
 		}
 
 		snprintf(cmd, sizeof(cmd), "%s --add-section .BTF=%s %s",
 			 llvm_objcopy, tmp_fn, filename);
 		if (system(cmd)) {
 			fprintf(stderr, "%s: failed to add .BTF section to '%s': %d!\n",
-				__func__, tmp_fn, errno);
-			goto out;
+				__func__, filename, errno);
+			goto unlink;
 		}
 
 		err = 0;
+	unlink:
 		unlink(tmp_fn);
 	}
 

@@ -1,5 +1,5 @@
 project(pahole C)
-cmake_minimum_required(VERSION 2.8.8)
+cmake_minimum_required(VERSION 2.8.12)
 cmake_policy(SET CMP0005 NEW)
 
 INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR}
@@ -33,9 +33,9 @@ set(CMAKE_C_FLAGS_DEBUG "-Wall -Werror -ggdb -O0")
 set(CMAKE_C_FLAGS_RELEASE "-Wall -O2")
 
 # Just for grepping, DWARVES_VERSION isn't used anywhere anymore
-# add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.19")
+# add_definitions(-D_GNU_SOURCE -DDWARVES_VERSION="v1.20")
 add_definitions(-D_GNU_SOURCE -DDWARVES_MAJOR_VERSION=1)
-add_definitions(-D_GNU_SOURCE -DDWARVES_MINOR_VERSION=19)
+add_definitions(-D_GNU_SOURCE -DDWARVES_MINOR_VERSION=20)
 find_package(DWARF REQUIRED)
 find_package(ZLIB REQUIRED)
 

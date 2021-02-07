@@ -36,6 +36,7 @@ struct funcs_layout {
 struct elf_function {
 	const char	*name;
 	unsigned long	 addr;
+	unsigned long	 sh_addr;
 	bool		 generated;
 };
 
@@ -62,13 +63,18 @@ static void delete_functions(void)
 #define max(x, y) ((x) < (y) ? (y) : (x))
 #endif
 
-static int collect_function(struct btf_elf *btfe, GElf_Sym *sym)
+static int collect_function(struct btf_elf *btfe, GElf_Sym *sym,
+			    size_t sym_sec_idx)
 {
 	struct elf_function *new;
+	static GElf_Shdr sh;
+	static size_t last_idx;
+	const char *name;
 
 	if (elf_sym__type(sym) != STT_FUNC)
 		return 0;
-	if (!elf_sym__value(sym))
+	name = elf_sym__name(sym, btfe->symtab);
+	if (!name)
 		return 0;
 
 	if (functions_cnt == functions_alloc) {
@@ -84,8 +90,15 @@ static int collect_function(struct btf_elf *btfe, GElf_Sym *sym)
 		functions = new;
 	}
 
-	functions[functions_cnt].name = elf_sym__name(sym, btfe->symtab);
+	if (sym_sec_idx != last_idx) {
+		if (!elf_section_by_idx(btfe->elf, &sh, sym_sec_idx))
+			return 0;
+		last_idx = sym_sec_idx;
+	}
+
+	functions[functions_cnt].name = name;
 	functions[functions_cnt].addr = elf_sym__value(sym);
+	functions[functions_cnt].sh_addr = sh.sh_addr;
 	functions[functions_cnt].generated = false;
 	functions_cnt++;
 	return 0;
@@ -93,21 +106,29 @@ static int collect_function(struct btf_elf *btfe, GElf_Sym *sym)
 
 static int addrs_cmp(const void *_a, const void *_b)
 {
-	const unsigned long *a = _a;
-	const unsigned long *b = _b;
+	const __u64 *a = _a;
+	const __u64 *b = _b;
 
 	if (*a == *b)
 		return 0;
 	return *a < *b ? -1 : 1;
 }
 
-static int filter_functions(struct btf_elf *btfe, struct funcs_layout *fl)
+static int get_vmlinux_addrs(struct btf_elf *btfe, struct funcs_layout *fl,
+			     __u64 **paddrs, __u64 *pcount)
 {
-	unsigned long *addrs, count, offset, i;
-	int functions_valid = 0;
+	__u64 *addrs, count, offset;
+	unsigned int addr_size, i;
 	Elf_Data *data;
 	GElf_Shdr shdr;
 	Elf_Scn *sec;
+
+	/* Initialize for the sake of all error paths below. */
+	*paddrs = NULL;
+	*pcount = 0;
+
+	if (!fl->mcount_start || !fl->mcount_stop)
+		return 0;
 
 	/*
 	 * Find mcount addressed marked by __start_mcount_loc
@@ -121,8 +142,11 @@ static int filter_functions(struct btf_elf *btfe, struct funcs_layout *fl)
 		return -1;
 	}
 
+	/* Get address size from processed file's ELF class. */
+	addr_size = gelf_getclass(btfe->elf) == ELFCLASS32 ? 4 : 8;
+
 	offset = fl->mcount_start - shdr.sh_addr;
-	count  = (fl->mcount_stop - fl->mcount_start) / 8;
+	count  = (fl->mcount_stop - fl->mcount_start) / addr_size;
 
 	data = elf_getdata(sec, 0);
 	if (!data) {
@@ -137,8 +161,113 @@ static int filter_functions(struct btf_elf *btfe, struct funcs_layout *fl)
 		return -1;
 	}
 
-	memcpy(addrs, data->d_buf + offset, count * sizeof(addrs[0]));
+	if (addr_size == sizeof(__u64)) {
+		memcpy(addrs, data->d_buf + offset, count * addr_size);
+	} else {
+		for (i = 0; i < count; i++)
+			addrs[i] = (__u64) *((__u32 *) (data->d_buf + offset + i * addr_size));
+	}
+
+	*paddrs = addrs;
+	*pcount = count;
+	return 0;
+}
+
+static int
+get_kmod_addrs(struct btf_elf *btfe, __u64 **paddrs, __u64 *pcount)
+{
+	__u64 *addrs, count;
+	unsigned int addr_size, i;
+	GElf_Shdr shdr_mcount;
+	Elf_Data *data;
+	Elf_Scn *sec;
+
+	/* Initialize for the sake of all error paths below. */
+	*paddrs = NULL;
+	*pcount = 0;
+
+	/* get __mcount_loc */
+	sec = elf_section_by_name(btfe->elf, &btfe->ehdr, &shdr_mcount,
+				  "__mcount_loc", NULL);
+	if (!sec) {
+		if (btf_elf__verbose) {
+			printf("%s: '%s' doesn't have __mcount_loc section\n", __func__,
+			       btfe->filename);
+		}
+		return 0;
+	}
+
+	data = elf_getdata(sec, NULL);
+	if (!data) {
+		fprintf(stderr, "Failed to data for __mcount_loc section.\n");
+		return -1;
+	}
+
+	/* Get address size from processed file's ELF class. */
+	addr_size = gelf_getclass(btfe->elf) == ELFCLASS32 ? 4 : 8;
+
+	count = data->d_size / addr_size;
+
+	addrs = malloc(count * sizeof(addrs[0]));
+	if (!addrs) {
+		fprintf(stderr, "Failed to allocate memory for ftrace addresses.\n");
+		return -1;
+	}
+
+	if (addr_size == sizeof(__u64)) {
+		memcpy(addrs, data->d_buf, count * addr_size);
+	} else {
+		for (i = 0; i < count; i++)
+			addrs[i] = (__u64) *((__u32 *) (data->d_buf + i * addr_size));
+	}
+
+	/*
+	 * We get Elf object from dwfl_module_getelf function,
+	 * which performs all possible relocations, including
+	 * __mcount_loc section.
+	 *
+	 * So addrs array now contains relocated values, which
+	 * we need take into account when we compare them to
+	 * functions values, see comment in setup_functions
+	 * function.
+	 */
+	*paddrs = addrs;
+	*pcount = count;
+	return 0;
+}
+
+static int setup_functions(struct btf_elf *btfe, struct funcs_layout *fl)
+{
+	__u64 *addrs, count, i;
+	int functions_valid = 0;
+	bool kmod = false;
+
+	/*
+	 * Check if we are processing vmlinux image and
+	 * get mcount data if it's detected.
+	 */
+	if (get_vmlinux_addrs(btfe, fl, &addrs, &count))
+		return -1;
+
+	/*
+	 * Check if we are processing kernel module and
+	 * get mcount data if it's detected.
+	 */
+	if (!addrs) {
+		if (get_kmod_addrs(btfe, &addrs, &count))
+			return -1;
+		kmod = true;
+	}
+
+	if (!addrs) {
+		if (btf_elf__verbose)
+			printf("ftrace symbols not detected, falling back to DWARF data\n");
+		delete_functions();
+		return 0;
+	}
+
 	qsort(addrs, count, sizeof(addrs[0]), addrs_cmp);
+	qsort(functions, functions_cnt, sizeof(functions[0]), functions_cmp);
 
 	/*
 	 * Let's got through all collected functions and filter
@@ -146,9 +275,18 @@ static int filter_functions(struct btf_elf *btfe, struct funcs_layout *fl)
 	 */
 	for (i = 0; i < functions_cnt; i++) {
 		struct elf_function *func = &functions[i];
+		/*
+		 * For vmlinux image both addrs[x] and functions[x]::addr
+		 * values are final address and are comparable.
+		 *
+		 * For kernel module addrs[x] is final address, but
+		 * functions[x]::addr is relative address within section
+		 * and needs to be relocated by adding sh_addr.
+		 */
+		__u64 addr = kmod ? func->addr + func->sh_addr : func->addr;
 
 		/* Make sure function is within ftrace addresses. */
-		if (bsearch(&func->addr, addrs, count, sizeof(addrs[0]), addrs_cmp)) {
+		if (bsearch(&addr, addrs, count, sizeof(addrs[0]), addrs_cmp)) {
 			/*
 			 * We iterate over sorted array, so we can easily skip
 			 * not valid item and move following valid field into
@@ -162,6 +300,9 @@ static int filter_functions(struct btf_elf *btfe, struct funcs_layout *fl)
 
 	functions_cnt = functions_valid;
 	free(addrs);
+
+	if (btf_elf__verbose)
+		printf("Found %d functions!\n", functions_cnt);
 	return 0;
 }
 
@@ -399,34 +540,20 @@ static bool percpu_var_exists(uint64_t addr, uint32_t *sz, const char **name)
 	return true;
 }
 
-static int collect_percpu_var(struct btf_elf *btfe, GElf_Sym *sym)
+static int collect_percpu_var(struct btf_elf *btfe, GElf_Sym *sym,
+			      size_t sym_sec_idx)
 {
 	const char *sym_name;
 	uint64_t addr;
 	uint32_t size;
 
 	/* compare a symbol's shndx to determine if it's a percpu variable */
-	if (elf_sym__section(sym) != btfe->percpu_shndx)
+	if (sym_sec_idx != btfe->percpu_shndx)
 		return 0;
 	if (elf_sym__type(sym) != STT_OBJECT)
 		return 0;
 
 	addr = elf_sym__value(sym);
-	/*
-	 * Store only those symbols that have allocated space in the percpu section.
-	 * This excludes the following three types of symbols:
-	 *
-	 *  1. __ADDRESSABLE(sym), which are forcely emitted as symbols.
-	 *  2. __UNIQUE_ID(prefix), which are introduced to generate unique ids.
-	 *  3. __exitcall(fn), functions which are labeled as exit calls.
-	 *
-	 * In addition, the variables defined using DEFINE_PERCPU_FIRST are
-	 * also not included, which currently includes:
-	 *
-	 *  1. fixed_percpu_data
-	 */
-	if (!addr)
-		return 0;
 
 	size = elf_sym__size(sym);
 	if (!size)
@@ -442,7 +569,7 @@ static int collect_percpu_var(struct btf_elf *btfe, GElf_Sym *sym)
 	}
 
 	if (btf_elf__verbose)
-		printf("Found per-CPU symbol '%s' at address 0x%lx\n", sym_name, addr);
+		printf("Found per-CPU symbol '%s' at address 0x%" PRIx64 "\n", sym_name, addr);
 
 	if (percpu_var_cnt == MAX_PERCPU_VAR_CNT) {
 		fprintf(stderr, "Reached the limit of per-CPU variables: %d\n",
@@ -457,12 +584,13 @@ static int collect_percpu_var(struct btf_elf *btfe, GElf_Sym *sym)
 	return 0;
 }
 
-static void collect_symbol(GElf_Sym *sym, struct funcs_layout *fl)
+static void collect_symbol(GElf_Sym *sym, struct funcs_layout *fl,
+			   size_t sym_sec_idx)
 {
 	if (!fl->mcount_start &&
 	    !strcmp("__start_mcount_loc", elf_sym__name(sym, btfe->symtab))) {
 		fl->mcount_start = sym->st_value;
-		fl->mcount_sec_idx = sym->st_shndx;
+		fl->mcount_sec_idx = sym_sec_idx;
 	}
 
 	if (!fl->mcount_stop &&
@@ -470,14 +598,10 @@ static void collect_symbol(GElf_Sym *sym, struct funcs_layout *fl)
 		fl->mcount_stop = sym->st_value;
 }
 
-static int has_all_symbols(struct funcs_layout *fl)
-{
-	return fl->mcount_start && fl->mcount_stop;
-}
-
 static int collect_symbols(struct btf_elf *btfe, bool collect_percpu_vars)
 {
 	struct funcs_layout fl = { };
+	Elf32_Word sym_sec_idx;
 	uint32_t core_id;
 	GElf_Sym sym;
 
@@ -485,12 +609,12 @@ static int collect_symbols(struct btf_elf *btfe, bool collect_percpu_vars)
 	percpu_var_cnt = 0;
 
 	/* search within symtab for percpu variables */
-	elf_symtab__for_each_symbol(btfe->symtab, core_id, sym) {
-		if (collect_percpu_vars && collect_percpu_var(btfe, &sym))
+	elf_symtab__for_each_symbol_index(btfe->symtab, core_id, sym, sym_sec_idx) {
+		if (collect_percpu_vars && collect_percpu_var(btfe, &sym, sym_sec_idx))
 			return -1;
-		if (collect_function(btfe, &sym))
+		if (collect_function(btfe, &sym, sym_sec_idx))
 			return -1;
-		collect_symbol(&sym, &fl);
+		collect_symbol(&sym, &fl, sym_sec_idx);
 	}
 
 	if (collect_percpu_vars) {
@@ -501,18 +625,9 @@ static int collect_symbols(struct btf_elf *btfe, bool collect_percpu_vars)
 			printf("Found %d per-CPU variables!\n", percpu_var_cnt);
 	}
 
-	if (functions_cnt && has_all_symbols(&fl)) {
-		qsort(functions, functions_cnt, sizeof(functions[0]), functions_cmp);
-		if (filter_functions(btfe, &fl)) {
-			fprintf(stderr, "Failed to filter dwarf functions\n");
-			return -1;
-		}
-		if (btf_elf__verbose)
-			printf("Found %d functions!\n", functions_cnt);
-	} else {
-		if (btf_elf__verbose)
-			printf("ftrace symbols not detected, falling back to DWARF data\n");
-		delete_functions();
+	if (functions_cnt && setup_functions(btfe, &fl)) {
+		fprintf(stderr, "Failed to filter DWARF functions\n");
+		return -1;
 	}
 
 	return 0;
@@ -621,8 +736,13 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 			continue;
 		if (functions_cnt) {
 			struct elf_function *func;
+			const char *name;
 
-			func = find_function(btfe, function__name(fn, cu));
+			name = function__name(fn, cu);
+			if (!name)
+				continue;
+
+			func = find_function(btfe, name);
 			if (!func || func->generated)
 				continue;
 			func->generated = true;
@@ -651,8 +771,8 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 		printf("search cu '%s' for percpu global variables.\n", cu->name);
 
 	cu__for_each_variable(cu, core_id, pos) {
-		uint32_t size, type, linkage, offset;
-		const char *name;
+		uint32_t size, type, linkage;
+		const char *name, *dwarf_name;
 		uint64_t addr;
 		int id;
 
@@ -665,11 +785,46 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 
 		/* addr has to be recorded before we follow spec */
 		addr = var->ip.addr;
-		if (var->spec)
-			var = var->spec;
+
+		/* DWARF takes into account .data..percpu section offset
+		 * within its segment, which for vmlinux is 0, but for kernel
+		 * modules is >0. ELF symbols, on the other hand, don't take
+		 * into account these offsets (as they are relative to the
+		 * section start), so to match DWARF and ELF symbols we need
+		 * to negate the section base address here.
+		 */
+		if (addr < btfe->percpu_base_addr || addr >= btfe->percpu_base_addr + btfe->percpu_sec_sz)
+			continue;
+		addr -= btfe->percpu_base_addr;
 
 		if (!percpu_var_exists(addr, &size, &name))
 			continue; /* not a per-CPU variable */
+
+		/* A lot of "special" DWARF variables (e.g, __UNIQUE_ID___xxx)
+		 * have addr == 0, which is the same as, say, valid
+		 * fixed_percpu_data per-CPU variable. To distinguish between
+		 * them, additionally compare DWARF and ELF symbol names. If
+		 * DWARF doesn't provide proper name, pessimistically assume
+		 * bad variable.
+		 *
+		 * Examples of such special variables are:
+		 *
+		 *  1. __ADDRESSABLE(sym), which are forcely emitted as symbols.
+		 *  2. __UNIQUE_ID(prefix), which are introduced to generate unique ids.
+		 *  3. __exitcall(fn), functions which are labeled as exit calls.
+		 *
+		 *  This is relevant only for vmlinux image, as for kernel
+		 *  modules per-CPU data section has non-zero offset so all
+		 *  per-CPU symbols have non-zero values.
+		 */
+		if (var->ip.addr == 0) {
+			dwarf_name = variable__name(var, cu);
+			if (!dwarf_name || strcmp(dwarf_name, name))
+				continue;
+		}
+
+		if (var->spec)
+			var = var->spec;
 
 		if (var->ip.tag.type == 0) {
 			fprintf(stderr, "error: found variable '%s' in CU '%s' that has void type\n",
@@ -684,7 +839,7 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 		linkage = var->external ? BTF_VAR_GLOBAL_ALLOCATED : BTF_VAR_STATIC;
 
 		if (btf_elf__verbose) {
-			printf("Variable '%s' from CU '%s' at address 0x%lx encoded\n",
+			printf("Variable '%s' from CU '%s' at address 0x%" PRIx64 " encoded\n",
 			       name, cu->name, addr);
 		}
 
@@ -692,7 +847,7 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 		id = btf_elf__add_var_type(btfe, type, name, linkage);
 		if (id < 0) {
 			err = -1;
-			fprintf(stderr, "error: failed to encode variable '%s' at addr 0x%lx\n",
+			fprintf(stderr, "error: failed to encode variable '%s' at addr 0x%" PRIx64 "\n",
 			        name, addr);
 			break;
 		}
@@ -701,11 +856,10 @@ int cu__encode_btf(struct cu *cu, int verbose, bool force,
 		 * add a BTF_VAR_SECINFO in btfe->percpu_secinfo, which will be added into
 		 * btfe->types later when we add BTF_VAR_DATASEC.
 		 */
-		offset = addr - btfe->percpu_base_addr;
-		id = btf_elf__add_var_secinfo(&btfe->percpu_secinfo, id, offset, size);
+		id = btf_elf__add_var_secinfo(&btfe->percpu_secinfo, id, addr, size);
 		if (id < 0) {
 			err = -1;
-			fprintf(stderr, "error: failed to encode section info for variable '%s' at addr 0x%lx\n",
+			fprintf(stderr, "error: failed to encode section info for variable '%s' at addr 0x%" PRIx64 "\n",
 			        name, addr);
 			break;
 		}
