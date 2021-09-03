@@ -1,3 +1,19 @@
+dwarves-dfsg (1.21-0ubuntu1) focal; urgency=medium
+
+  * New upstream release. Remaining changes:
+    - pahole: cherry-pick removal of the ftrace filter and its related
+    functions to prevent build errors with linux 5.13.
+    - build with libbpf 0.4, as will be required in the next release.
+
+ -- Dimitri John Ledkov <xnox@ubuntu.com>  Wed, 16 Jun 2021 09:57:20 +0100
+
+dwarves-dfsg (1.20-1ubuntu1) impish; urgency=medium
+
+  * pahole: remove the ftrace filter and its related functions to prevent
+    build errors with linux 5.13 (LP: #1928244)
+
+ -- Andrea Righi <andrea.righi@canonical.com>  Wed, 12 May 2021 18:00:27 +0200
+
 dwarves-dfsg (1.20-1) unstable; urgency=medium
 
   * New upstream release.

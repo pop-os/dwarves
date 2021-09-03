@@ -2,3 +2,4 @@ no_shared_no_ebl
 fix-typo-in-manual-page
 fix-escaping-in-manual-page
 packaged_libbpf.patch
+remove-bpf-ftrace-filter.patch

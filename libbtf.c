@@ -27,9 +27,20 @@
 #include "dwarves.h"
 #include "elf_symtab.h"
 
+/*
+ * This depends on the GNU extension to eliminate the stray comma in the zero
+ * arguments case.
+ *
+ * The difference between elf_errmsg(-1) and elf_errmsg(elf_errno()) is that the
+ * latter clears the current error.
+ */
+#define elf_error(fmt, ...) \
+	fprintf(stderr, "%s: " fmt ": %s.\n", __func__, ##__VA_ARGS__, elf_errmsg(-1))
+
 struct btf *base_btf;
 uint8_t btf_elf__verbose;
 uint8_t btf_elf__force;
+bool btf_gen_floats = false;
 
 static int btf_var_secinfo_cmp(const void *a, const void *b)
 {
@@ -103,15 +114,13 @@ try_as_raw_btf:
 			goto errout;
 
 		if (elf_version(EV_CURRENT) == EV_NONE) {
-			fprintf(stderr, "%s: cannot set libelf version.\n",
-				__func__);
+			elf_error("cannot set libelf version");
 			goto errout;
 		}
 
 		btfe->elf = elf_begin(btfe->in_fd, ELF_C_READ_MMAP, NULL);
 		if (!btfe->elf) {
-			fprintf(stderr, "%s: cannot read %s ELF file: %s.\n",
-				__func__, filename, elf_errmsg(elf_errno()));
+			elf_error("cannot read %s ELF file", filename);
 			goto errout;
 		}
 	}
@@ -127,7 +136,7 @@ try_as_raw_btf:
 			goto try_as_raw_btf;
 		}
 		if (btf_elf__verbose)
-			fprintf(stderr, "%s: cannot get elf header.\n", __func__);
+			elf_error("cannot get ELF header");
 		goto errout;
 	}
 
@@ -141,7 +150,7 @@ try_as_raw_btf:
 		btf__set_endianness(btfe->btf, BTF_BIG_ENDIAN);
 		break;
 	default:
-		fprintf(stderr, "%s: unknown elf endianness.\n", __func__);
+		fprintf(stderr, "%s: unknown ELF endianness.\n", __func__);
 		goto errout;
 	}
 
@@ -227,6 +236,7 @@ static const char * const btf_kind_str[NR_BTF_KINDS] = {
 	[BTF_KIND_FUNC_PROTO]	= "FUNC_PROTO",
 	[BTF_KIND_VAR]          = "VAR",
 	[BTF_KIND_DATASEC]      = "DATASEC",
+	[BTF_KIND_FLOAT]        = "FLOAT",
 };
 
 static const char *btf_elf__printable_name(const struct btf_elf *btfe, uint32_t offset)
@@ -367,24 +377,91 @@ static void btf_log_func_param(const struct btf_elf *btfe,
 	}
 }
 
+static int32_t btf_elf__add_float_type(struct btf_elf *btfe,
+				       const struct base_type *bt,
+				       const char *name)
+{
+	int32_t id;
+
+	id = btf__add_float(btfe->btf, name, BITS_ROUNDUP_BYTES(bt->bit_size));
+	if (id < 0) {
+		btf_elf__log_err(btfe, BTF_KIND_FLOAT, name, true, "Error emitting BTF type");
+	} else {
+		const struct btf_type *t;
+
+		t = btf__type_by_id(btfe->btf, id);
+		btf_elf__log_type(btfe, t, false, true,
+				  "size=%u nr_bits=%u",
+				  t->size, bt->bit_size);
+	}
+
+	return id;
+}
+
 int32_t btf_elf__add_base_type(struct btf_elf *btfe, const struct base_type *bt,
 			       const char *name)
 {
 	struct btf *btf = btfe->btf;
 	const struct btf_type *t;
 	uint8_t encoding = 0;
+	uint16_t byte_sz;
 	int32_t id;
 
 	if (bt->is_signed) {
 		encoding = BTF_INT_SIGNED;
 	} else if (bt->is_bool) {
 		encoding = BTF_INT_BOOL;
-	} else if (bt->float_type) {
-		fprintf(stderr, "float_type is not supported\n");
+	} else if (bt->float_type && btf_gen_floats) {
+		/*
+		 * Encode floats as BTF_KIND_FLOAT if allowed, otherwise (in
+		 * compatibility mode) encode them as BTF_KIND_INT - that's not
+		 * fully correct, but that's what it used to be.
+		 */
+		if (bt->float_type == BT_FP_SINGLE ||
+		    bt->float_type == BT_FP_DOUBLE ||
+		    bt->float_type == BT_FP_LDBL)
+			return btf_elf__add_float_type(btfe, bt, name);
+		fprintf(stderr, "Complex, interval and imaginary float types are not supported\n");
 		return -1;
 	}
 
-	id = btf__add_int(btf, name, BITS_ROUNDUP_BYTES(bt->bit_size), encoding);
+	/* dwarf5 may emit DW_ATE_[un]signed_{num} base types where
+	 * {num} is not power of 2 and may exceed 128. Such attributes
+	 * are mostly used to record operation for an actual parameter
+	 * or variable.
+	 * For example,
+	 *     DW_AT_location        (indexed (0x3c) loclist = 0x00008fb0:
+	 *         [0xffffffff82808812, 0xffffffff82808817):
+	 *             DW_OP_breg0 RAX+0,
+	 *             DW_OP_convert (0x000e97d5) "DW_ATE_unsigned_64",
+	 *             DW_OP_convert (0x000e97df) "DW_ATE_unsigned_8",
+	 *             DW_OP_stack_value,
+	 *             DW_OP_piece 0x1,
+	 *             DW_OP_breg0 RAX+0,
+	 *             DW_OP_convert (0x000e97d5) "DW_ATE_unsigned_64",
+	 *             DW_OP_convert (0x000e97da) "DW_ATE_unsigned_32",
+	 *             DW_OP_lit8,
+	 *             DW_OP_shr,
+	 *             DW_OP_convert (0x000e97da) "DW_ATE_unsigned_32",
+	 *             DW_OP_convert (0x000e97e4) "DW_ATE_unsigned_24",
+	 *             DW_OP_stack_value, DW_OP_piece 0x3
+	 *     DW_AT_name    ("ebx")
+	 *     DW_AT_decl_file       ("/linux/arch/x86/events/intel/core.c")
+	 *
+	 * In the above example, at some point, one unsigned_32 value
+	 * is right shifted by 8 and the result is converted to unsigned_32
+	 * and then unsigned_24.
+	 *
+	 * BTF does not need such DW_OP_* information so let us sanitize
+	 * these non-regular int types to avoid libbpf/kernel complaints.
+	 */
+	byte_sz = BITS_ROUNDUP_BYTES(bt->bit_size);
+	if (!byte_sz || (byte_sz & (byte_sz - 1))) {
+		name = "__SANITIZED_FAKE_INT__";
+		byte_sz = 4;
+	}
+
+	id = btf__add_int(btf, name, byte_sz, encoding);
 	if (id < 0) {
 		btf_elf__log_err(btfe, BTF_KIND_INT, name, true, "Error emitting BTF type");
 	} else {
@@ -707,15 +784,13 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 	}
 
 	if (elf_version(EV_CURRENT) == EV_NONE) {
-		fprintf(stderr, "Cannot set libelf version: %s.\n",
-			elf_errmsg(elf_errno()));
+		elf_error("Cannot set libelf version");
 		goto out;
 	}
 
 	elf = elf_begin(fd, ELF_C_RDWR, NULL);
 	if (elf == NULL) {
-		fprintf(stderr, "Cannot update ELF file: %s.\n",
-			elf_errmsg(elf_errno()));
+		elf_error("Cannot update ELF file");
 		goto out;
 	}
 
@@ -723,8 +798,7 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 
 	ehdr = gelf_getehdr(elf, &ehdr_mem);
 	if (ehdr == NULL) {
-		fprintf(stderr, "%s: elf_getehdr failed: %s.\n", __func__,
-			elf_errmsg(elf_errno()));
+		elf_error("elf_getehdr failed");
 		goto out;
 	}
 
@@ -736,7 +810,7 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 		btf__set_endianness(btf, BTF_BIG_ENDIAN);
 		break;
 	default:
-		fprintf(stderr, "%s: unknown elf endianness.\n", __func__);
+		fprintf(stderr, "%s: unknown ELF endianness.\n", __func__);
 		goto out;
 	}
 
@@ -768,8 +842,7 @@ static int btf_elf__write(const char *filename, struct btf *btf)
 		    elf_update(elf, ELF_C_WRITE) >= 0)
 			err = 0;
 		else
-			fprintf(stderr, "%s: elf_update failed: %s.\n",
-				__func__, elf_errmsg(elf_errno()));
+			elf_error("elf_update failed");
 	} else {
 		const char *llvm_objcopy;
 		char tmp_fn[PATH_MAX];

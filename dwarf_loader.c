@@ -50,7 +50,13 @@ struct strings *strings;
 #define DW_FORM_implicit_const 0x21
 #endif
 
-#define hashtags__fn(key) hash_64(key, HASHTAGS__BITS)
+static uint32_t hashtags__bits = 15;
+static uint32_t max_hashtags__bits = 21;
+
+static uint32_t hashtags__fn(Dwarf_Off key)
+{
+	return hash_64(key, hashtags__bits);
+}
 
 bool no_bitfield_type_recode = true;
 
@@ -102,9 +108,6 @@ static void dwarf_tag__set_spec(struct dwarf_tag *dtag, dwarf_off_ref spec)
 	*(dwarf_off_ref *)(dtag + 1) = spec;
 }
 
-#define HASHTAGS__BITS 15
-#define HASHTAGS__SIZE (1UL << HASHTAGS__BITS)
-
 #define obstack_chunk_alloc malloc
 #define obstack_chunk_free free
 
@@ -118,22 +121,57 @@ static void *obstack_zalloc(struct obstack *obstack, size_t size)
 }
 
 struct dwarf_cu {
-	struct hlist_head hash_tags[HASHTAGS__SIZE];
-	struct hlist_head hash_types[HASHTAGS__SIZE];
+	struct hlist_head *hash_tags;
+	struct hlist_head *hash_types;
 	struct obstack obstack;
 	struct cu *cu;
 	struct dwarf_cu *type_unit;
 };
 
-static void dwarf_cu__init(struct dwarf_cu *dcu)
+static int dwarf_cu__init(struct dwarf_cu *dcu)
 {
+	uint64_t hashtags_size = 1UL << hashtags__bits;
+	dcu->hash_tags = malloc(sizeof(struct hlist_head) * hashtags_size);
+	if (!dcu->hash_tags)
+		return -ENOMEM;
+
+	dcu->hash_types = malloc(sizeof(struct hlist_head) * hashtags_size);
+	if (!dcu->hash_types) {
+		free(dcu->hash_tags);
+		return -ENOMEM;
+	}
+
 	unsigned int i;
-	for (i = 0; i < HASHTAGS__SIZE; ++i) {
+	for (i = 0; i < hashtags_size; ++i) {
 		INIT_HLIST_HEAD(&dcu->hash_tags[i]);
 		INIT_HLIST_HEAD(&dcu->hash_types[i]);
 	}
 	obstack_init(&dcu->obstack);
 	dcu->type_unit = NULL;
+	return 0;
+}
+
+static struct dwarf_cu *dwarf_cu__new(void)
+{
+	struct dwarf_cu *dwarf_cu = zalloc(sizeof(*dwarf_cu));
+
+	if (dwarf_cu != NULL && dwarf_cu__init(dwarf_cu) != 0) {
+		free(dwarf_cu);
+		dwarf_cu = NULL;
+	}
+
+	return dwarf_cu;
+}
+
+static void dwarf_cu__delete(struct cu *cu)
+{
+	struct dwarf_cu *dcu = cu->priv;
+	free(dcu->hash_tags);
+	dcu->hash_tags = NULL;
+	free(dcu->hash_types);
+	dcu->hash_types = NULL;
+	free(dcu);
+	cu->priv = NULL;
 }
 
 static void hashtags__hash(struct hlist_head *hashtable,
@@ -151,7 +189,7 @@ static struct dwarf_tag *hashtags__find(const struct hlist_head *hashtable,
 
 	struct dwarf_tag *tpos;
 	struct hlist_node *pos;
-	uint16_t bucket = hashtags__fn(id);
+	uint32_t bucket = hashtags__fn(id);
 	const struct hlist_head *head = hashtable + bucket;
 
 	hlist_for_each_entry(tpos, pos, head, hash_node) {
@@ -363,8 +401,19 @@ static int attr_location(Dwarf_Die *die, Dwarf_Op **expr, size_t *exprlen)
 {
 	Dwarf_Attribute attr;
 	if (dwarf_attr(die, DW_AT_location, &attr) != NULL) {
-		if (dwarf_getlocation(&attr, expr, exprlen) == 0)
+		if (dwarf_getlocation(&attr, expr, exprlen) == 0) {
+			/* DW_OP_addrx needs additional lookup for real addr. */
+			if (*exprlen != 0 && expr[0]->atom == DW_OP_addrx) {
+				Dwarf_Attribute addr_attr;
+				dwarf_getlocation_attr(&attr, expr[0], &addr_attr);
+
+				Dwarf_Addr address;
+				dwarf_formaddr (&addr_attr, &address);
+
+				expr[0]->number = address;
+			}
 			return 0;
+		}
 	}
 
 	return 1;
@@ -461,6 +510,16 @@ static struct ptr_to_member_type *ptr_to_member_type__new(Dwarf_Die *die,
 	return ptr;
 }
 
+static uint8_t encoding_to_float_type(uint64_t encoding)
+{
+	switch (encoding) {
+	case DW_ATE_complex_float:	return BT_FP_CMPLX;
+	case DW_ATE_float:		return BT_FP_SINGLE;
+	case DW_ATE_imaginary_float:	return BT_FP_IMGRY;
+	default:			return 0;
+	}
+}
+
 static struct base_type *base_type__new(Dwarf_Die *die, struct cu *cu)
 {
 	struct base_type *bt = tag__alloc(cu, sizeof(*bt));
@@ -474,6 +533,7 @@ static struct base_type *base_type__new(Dwarf_Die *die, struct cu *cu)
 		bt->is_signed = encoding == DW_ATE_signed;
 		bt->is_varargs = false;
 		bt->name_has_encoding = true;
+		bt->float_type = encoding_to_float_type(encoding);
 	}
 
 	return bt;
@@ -577,6 +637,7 @@ static enum vscope dwarf__location(Dwarf_Die *die, uint64_t *addr, struct locati
 		Dwarf_Op *expr = location->expr;
 		switch (expr->atom) {
 		case DW_OP_addr:
+		case DW_OP_addrx:
 			scope = VSCOPE_GLOBAL;
 			*addr = expr[0].number;
 			break;
@@ -954,9 +1015,10 @@ static struct lexblock *lexblock__new(Dwarf_Die *die, struct cu *cu)
 
 static void ftype__init(struct ftype *ftype, Dwarf_Die *die, struct cu *cu)
 {
+#ifndef NDEBUG
 	const uint16_t tag = dwarf_tag(die);
 	assert(tag == DW_TAG_subprogram || tag == DW_TAG_subroutine_type);
-
+#endif
 	tag__init(&ftype->tag, cu, die);
 	INIT_LIST_HEAD(&ftype->parms);
 	ftype->nr_parms	    = 0;
@@ -2148,6 +2210,34 @@ out:
 	return 0;
 }
 
+static int cu__resolve_func_ret_types(struct cu *cu)
+{
+	struct ptr_table *pt = &cu->functions_table;
+	uint32_t i;
+
+	for (i = 0; i < pt->nr_entries; ++i) {
+		struct tag *tag = pt->entries[i];
+
+		if (tag == NULL || tag->type != 0)
+			continue;
+
+		struct function *fn = tag__function(tag);
+		if (!fn->abstract_origin)
+			continue;
+
+		struct dwarf_tag *dtag = tag->priv;
+		struct dwarf_tag *dfunc;
+		dfunc = dwarf_cu__find_tag_by_ref(cu->priv, &dtag->abstract_origin);
+		if (dfunc == NULL) {
+			tag__print_abstract_origin_not_found(tag);
+			return -1;
+		}
+
+		tag->type = dfunc->tag->type;
+	}
+	return 0;
+}
+
 static int cu__recode_dwarf_types_table(struct cu *cu,
 					struct ptr_table *pt,
 					uint32_t i)
@@ -2245,7 +2335,11 @@ static int die__process_and_recode(Dwarf_Die *die, struct cu *cu)
 	int ret = die__process(die, cu);
 	if (ret != 0)
 		return ret;
-	return cu__recode_dwarf_types(cu);
+	ret = cu__recode_dwarf_types(cu);
+	if (ret != 0)
+		return ret;
+
+	return cu__resolve_func_ret_types(cu);
 }
 
 static int class_member__cache_byte_size(struct tag *tag, struct cu *cu,
@@ -2378,6 +2472,23 @@ static int finalize_cu_immediately(struct cus *cus, struct cu *cu,
 	return lsk;
 }
 
+static int cu__set_common(struct cu *cu, struct conf_load *conf,
+			  Dwfl_Module *mod, Elf *elf)
+{
+	cu->uses_global_strings = true;
+	cu->elf = elf;
+	cu->dwfl = mod;
+	cu->extra_dbg_info = conf ? conf->extra_dbg_info : 0;
+	cu->has_addr_info = conf ? conf->get_addr_info : 0;
+
+	GElf_Ehdr ehdr;
+	if (gelf_getehdr(elf, &ehdr) == NULL)
+		return DWARF_CB_ABORT;
+
+	cu->little_endian = ehdr.e_ident[EI_DATA] == ELFDATA2LSB;
+	return 0;
+}
+
 static int cus__load_debug_types(struct cus *cus, struct conf_load *conf,
 				 Dwfl_Module *mod, Dwarf *dw, Elf *elf,
 				 const char *filename,
@@ -2401,23 +2512,14 @@ static int cus__load_debug_types(struct cus *cus, struct conf_load *conf,
 
 			cu = cu__new("", pointer_size, build_id,
 				     build_id_len, filename);
-			if (cu == NULL) {
+			if (cu == NULL ||
+			    cu__set_common(cu, conf, mod, elf) != 0) {
 				return DWARF_CB_ABORT;
 			}
 
-			cu->uses_global_strings = true;
-			cu->elf = elf;
-			cu->dwfl = mod;
-			cu->extra_dbg_info = conf ? conf->extra_dbg_info : 0;
-			cu->has_addr_info = conf ? conf->get_addr_info : 0;
-
-			GElf_Ehdr ehdr;
-			if (gelf_getehdr(elf, &ehdr) == NULL) {
+			if (dwarf_cu__init(dcup) != 0)
 				return DWARF_CB_ABORT;
-			}
-			cu->little_endian = ehdr.e_ident[EI_DATA] == ELFDATA2LSB;
 
-			dwarf_cu__init(dcup);
 			dcup->cu = cu;
 			/* Funny hack.  */
 			dcup->type_unit = dcup;
@@ -2438,6 +2540,159 @@ static int cus__load_debug_types(struct cus *cus, struct conf_load *conf,
 	}
 
 	if (*cup != NULL && cu__recode_dwarf_types(*cup) != 0)
+		return DWARF_CB_ABORT;
+
+	return 0;
+}
+
+/* Match the define in linux:include/linux/elfnote.h */
+#define LINUX_ELFNOTE_BUILD_LTO		0x101
+
+static bool cus__merging_cu(Dwarf *dw, Elf *elf)
+{
+	Elf_Scn *section = NULL;
+	while ((section = elf_nextscn(elf, section)) != 0) {
+		GElf_Shdr header;
+		if (!gelf_getshdr(section, &header))
+			continue;
+
+		if (header.sh_type != SHT_NOTE)
+			continue;
+
+		Elf_Data *data = NULL;
+		while ((data = elf_getdata(section, data)) != 0) {
+			size_t name_off, desc_off, offset = 0;
+			GElf_Nhdr hdr;
+			while ((offset = gelf_getnote(data, offset, &hdr, &name_off, &desc_off)) != 0) {
+				if (hdr.n_type != LINUX_ELFNOTE_BUILD_LTO)
+					continue;
+
+				/* owner is Linux */
+				if (strcmp((char *)data->d_buf + name_off, "Linux") != 0)
+					continue;
+
+				return *(int *)(data->d_buf + desc_off) != 0;
+			}
+		}
+	}
+
+	Dwarf_Off off = 0, noff;
+	size_t cuhl;
+
+	while (dwarf_nextcu (dw, off, &noff, &cuhl, NULL, NULL, NULL) == 0) {
+		Dwarf_Die die_mem;
+		Dwarf_Die *cu_die = dwarf_offdie(dw, off + cuhl, &die_mem);
+
+		if (cu_die == NULL)
+			break;
+
+		Dwarf_Off offset = 0;
+		while (true) {
+			size_t length;
+			Dwarf_Abbrev *abbrev = dwarf_getabbrev (cu_die, offset, &length);
+			if (abbrev == NULL || abbrev == DWARF_END_ABBREV)
+				break;
+
+			size_t attrcnt;
+			if (dwarf_getattrcnt (abbrev, &attrcnt) != 0)
+				return false;
+
+			unsigned int attr_num, attr_form;
+			Dwarf_Off aboffset;
+			size_t j;
+			for (j = 0; j < attrcnt; ++j) {
+				if (dwarf_getabbrevattr (abbrev, j, &attr_num, &attr_form,
+							 &aboffset))
+					return false;
+				if (attr_form == DW_FORM_ref_addr)
+					return true;
+			}
+
+			offset += length;
+		}
+
+		off = noff;
+	}
+
+	return false;
+}
+
+static int cus__merge_and_process_cu(struct cus *cus, struct conf_load *conf,
+				     Dwfl_Module *mod, Dwarf *dw, Elf *elf,
+				     const char *filename,
+				     const unsigned char *build_id,
+				     int build_id_len,
+				     struct dwarf_cu *type_dcu)
+{
+	uint8_t pointer_size, offset_size;
+	struct dwarf_cu *dcu = NULL;
+	Dwarf_Off off = 0, noff;
+	struct cu *cu = NULL;
+	size_t cuhl;
+
+	while (dwarf_nextcu(dw, off, &noff, &cuhl, NULL, &pointer_size,
+			    &offset_size) == 0) {
+		Dwarf_Die die_mem;
+		Dwarf_Die *cu_die = dwarf_offdie(dw, off + cuhl, &die_mem);
+
+		if (cu_die == NULL)
+			break;
+
+		if (cu == NULL) {
+			cu = cu__new("", pointer_size, build_id, build_id_len,
+				     filename);
+			if (cu == NULL || cu__set_common(cu, conf, mod, elf) != 0)
+				return DWARF_CB_ABORT;
+
+			dcu = malloc(sizeof(struct dwarf_cu));
+			if (dcu == NULL)
+				return DWARF_CB_ABORT;
+
+			/* Merged cu tends to need a lot more memory.
+			 * Let us start with max_hashtags__bits and
+			 * go down to find a proper hashtag bit value.
+			 */
+			uint32_t default_hbits = hashtags__bits;
+			for (hashtags__bits = max_hashtags__bits;
+			     hashtags__bits >= default_hbits;
+			     hashtags__bits--) {
+				if (dwarf_cu__init(dcu) == 0)
+					break;
+			}
+			if (hashtags__bits < default_hbits)
+				return DWARF_CB_ABORT;
+
+			dcu->cu = cu;
+			dcu->type_unit = type_dcu;
+			cu->priv = dcu;
+			cu->dfops = &dwarf__ops;
+			cu->language = attr_numeric(cu_die, DW_AT_language);
+		}
+
+		Dwarf_Die child;
+		if (dwarf_child(cu_die, &child) == 0) {
+			if (die__process_unit(&child, cu) != 0)
+				return DWARF_CB_ABORT;
+		}
+
+		off = noff;
+	}
+
+	/* process merged cu */
+	if (cu__recode_dwarf_types(cu) != LSK__KEEPIT)
+		return DWARF_CB_ABORT;
+
+	/*
+	 * for lto build, the function return type may not be
+	 * resolved due to the return type of a subprogram is
+	 * encoded in another subprogram through abstract_origin
+	 * tag. Let us visit all subprograms again to resolve this.
+	 */
+	if (cu__resolve_func_ret_types(cu) != LSK__KEEPIT)
+		return DWARF_CB_ABORT;
+
+	if (finalize_cu_immediately(cus, cu, dcu, conf)
+	    == LSK__STOP_LOADING)
 		return DWARF_CB_ABORT;
 
 	return 0;
@@ -2477,6 +2732,15 @@ static int cus__load_module(struct cus *cus, struct conf_load *conf,
 		}
 	}
 
+	if (cus__merging_cu(dw, elf)) {
+		res = cus__merge_and_process_cu(cus, conf, mod, dw, elf, filename,
+						build_id, build_id_len,
+						type_cu ? &type_dcu : NULL);
+		if (res)
+			return res;
+		goto out;
+	}
+
 	while (dwarf_nextcu(dw, off, &noff, &cuhl, NULL, &pointer_size,
 			    &offset_size) == 0) {
 		Dwarf_Die die_mem;
@@ -2493,38 +2757,29 @@ static int cus__load_module(struct cus *cus, struct conf_load *conf,
 		const char *name = attr_string(cu_die, DW_AT_name);
 		struct cu *cu = cu__new(name ?: "", pointer_size,
 					build_id, build_id_len, filename);
-		if (cu == NULL)
+		if (cu == NULL || cu__set_common(cu, conf, mod, elf) != 0)
 			return DWARF_CB_ABORT;
-		cu->uses_global_strings = true;
-		cu->elf = elf;
-		cu->dwfl = mod;
-		cu->extra_dbg_info = conf ? conf->extra_dbg_info : 0;
-		cu->has_addr_info = conf ? conf->get_addr_info : 0;
 
-		GElf_Ehdr ehdr;
-		if (gelf_getehdr(elf, &ehdr) == NULL) {
+		struct dwarf_cu *dcu = dwarf_cu__new();
+
+		if (dcu == NULL)
 			return DWARF_CB_ABORT;
-		}
-		cu->little_endian = ehdr.e_ident[EI_DATA] == ELFDATA2LSB;
 
-		struct dwarf_cu dcu;
-
-		dwarf_cu__init(&dcu);
-		dcu.cu = cu;
-		dcu.type_unit = type_cu ? &type_dcu : NULL;
-		cu->priv = &dcu;
+		dcu->cu = cu;
+		dcu->type_unit = type_cu ? &type_dcu : NULL;
+		cu->priv = dcu;
 		cu->dfops = &dwarf__ops;
 
 		if (die__process_and_recode(cu_die, cu) != 0)
 			return DWARF_CB_ABORT;
 
-		if (finalize_cu_immediately(cus, cu, &dcu, conf)
-		    == LSK__STOP_LOADING)
+		if (finalize_cu_immediately(cus, cu, dcu, conf) == LSK__STOP_LOADING)
 			return DWARF_CB_ABORT;
 
 		off = noff;
 	}
 
+out:
 	if (type_lsk == LSK__DELETE)
 		cu__delete(type_cu);
 
@@ -2660,5 +2915,6 @@ struct debug_fmt_ops dwarf__ops = {
 	.tag__decl_file	     = dwarf_tag__decl_file,
 	.tag__decl_line	     = dwarf_tag__decl_line,
 	.tag__orig_id	     = dwarf_tag__orig_id,
+	.cu__delete	     = dwarf_cu__delete,
 	.has_alignment_info  = true,
 };
